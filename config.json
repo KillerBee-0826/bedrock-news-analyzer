@@ -1,0 +1,98 @@
+{
+  "question": "",
+  "gemini_model": "gemini-2.5-flash",
+  "max_retries": 3,
+  "retry_delay": 5,
+  "responses_dir": "responses",
+  "logs_dir": "logs",
+  "news_analysis_prompt_path": "news_analysis_prompt.txt",
+
+  "news_scraping": {
+    "enabled": true,
+    "scrape_yesterday_articles": true,
+    "timezone": "Asia/Tokyo",
+    "timeout_per_site": 30,
+    "parallel_workers": 3,
+    "max_articles_per_site": 30,
+    "user_agent": "Mozilla/5.0 (compatible; NewsBot/1.0)",
+
+    "content_fetching": {
+      "enabled": true,
+      "timeout_per_article": 10,
+      "parallel_content_workers": 5,
+      "max_content_length": 50000,
+      "min_content_length": 200
+    },
+
+    "sites": [
+      {
+        "name": "@IT",
+        "url": "https://atmarkit.itmedia.co.jp/",
+        "rss_url": "https://rss.itmedia.co.jp/rss/2.0/ait.xml",
+        "fallback_rss_paths": ["/feed", "/rss", "/index.rdf"],
+        "scraper_type": "rss",
+        "content_selectors": {
+          "article": [".article-body", "article", "main"],
+          "remove": [".ad", ".related", ".sns-share", "nav", "footer"]
+        }
+      },
+      {
+        "name": "ITmedia エンタープライズ",
+        "url": "https://www.itmedia.co.jp/enterprise/",
+        "rss_url": "https://rss.itmedia.co.jp/rss/2.0/enterprise.xml",
+        "fallback_rss_paths": ["/feed", "/rss"],
+        "scraper_type": "rss",
+        "encoding_fix": "chardet",
+        "content_selectors": {
+          "article": [".colmun_article", ".article-body", "article"],
+          "remove": [".ad", ".related", ".mailmag", ".sns-share", "nav", "footer"]
+        }
+      },
+      {
+        "name": "ITmedia AI+",
+        "url": "https://www.itmedia.co.jp/aiplus/",
+        "rss_url": "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",
+        "fallback_rss_paths": ["/feed", "/rss"],
+        "scraper_type": "rss",
+        "encoding_fix": "chardet",
+        "content_selectors": {
+          "article": [".colmun_article", ".article-body", "article"],
+          "remove": [".ad", ".related", ".mailmag", ".sns-share", "nav", "footer"]
+        }
+      },
+      {
+        "name": "クラウドWatch",
+        "url": "https://cloud.watch.impress.co.jp/",
+        "rss_url": "https://cloud.watch.impress.co.jp/data/rss/1.0/clw/feed.rdf",
+        "fallback_rss_paths": ["/feed", "/rss", "/index.rdf"],
+        "scraper_type": "rss",
+        "content_selectors": {
+          "article": ["article", ".article-body", "main"],
+          "remove": [".ad", ".related", "nav", "footer"]
+        }
+      },
+      {
+        "name": "AI Watch",
+        "url": "https://ai.watch.impress.co.jp/",
+        "rss_url": "https://www.watch.impress.co.jp/data/rss/1.0/ipw/feed.rdf",
+        "fallback_rss_paths": ["/feed", "/rss", "/index.rdf"],
+        "scraper_type": "rss",
+        "content_selectors": {
+          "article": ["article", ".article-body", "main"],
+          "remove": [".ad", ".related", "nav", "footer"]
+        }
+      },
+      {
+        "name": "日経クロステック",
+        "url": "https://xtech.nikkei.com/",
+        "rss_url": "https://xtech.nikkei.com/rss/xtech-it.rdf",
+        "fallback_rss_paths": ["/feed", "/atcl/feed/"],
+        "scraper_type": "rss",
+        "content_selectors": {
+          "article": ["article", ".article-body", "main"],
+          "remove": [".ad", ".paywall", ".related", "nav", "footer"]
+        }
+      }
+    ]
+  }
+}

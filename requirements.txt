@@ -1,0 +1,15 @@
+google-generativeai>=0.3.2
+python-dotenv>=1.0.0
+
+# Web scraping dependencies
+feedparser>=6.0.10          # RSSフィード解析
+beautifulsoup4>=4.12.0      # HTML解析
+lxml>=5.0.0                 # BeautifulSoupの高速パーサー
+requests>=2.31.0            # HTTP通信
+pytz>=2024.1                # タイムゾーン処理
+python-dateutil>=2.8.2      # 日付パース
+
+# Article content extraction
+trafilatura>=1.13.0         # 記事本文抽出（ボイラープレート自動除去）
+chardet>=5.2.0              # エンコーディング自動検出（ITmedia対策）
+html5lib>=1.1               # 寛容なHTMLパーサー
