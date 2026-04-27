@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 LLM統合スクリプト
-AWS Lambda環境で動作し、Amazon Bedrock (Claude) またはGemini APIを使用してニュース分析を実行します。
+AWS Lambda環境とローカル環境で動作し、Amazon Bedrock (Claude)を使用してニュース分析を実行します。
 """
 
 import os
@@ -20,12 +20,6 @@ except ImportError as e:
     print(f"必要なパッケージがインストールされていません: {e}")
     print("Lambda環境ではboto3が組み込まれています")
     sys.exit(1)
-
-# Geminiは条件付きインポート（ロールバック用）
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None
 
 # dotenvはローカル開発時のみ使用（Lambda環境では不要）
 try:
@@ -70,23 +64,10 @@ class LLMFetcher:
             )
             self.logger.info(f"Bedrockクライアント初期化完了: {model_id}")
 
-        elif provider == "gemini":
-            # Google Gemini を使用（ロールバック用）
-            if genai is None:
-                self.logger.error("google-generativeaiパッケージがインストールされていません")
-                raise ImportError("google-generativeai が必要です")
-
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key or api_key == "your_api_key_here":
-                self.logger.error("GEMINI_API_KEYが設定されていません")
-                raise ValueError("GEMINI_API_KEY環境変数を設定してください")
-
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(self.config.get("gemini_model", "gemini-2.5-flash"))
-            self.logger.info(f"Geminiクライアント初期化完了: {self.config.get('gemini_model')}")
-
         else:
-            raise ValueError(f"未サポートのLLMプロバイダー: {provider}")
+            self.logger.error(f"未サポートのLLMプロバイダー: {provider}")
+            self.logger.error("現在はBedrock (Claude)のみサポートしています")
+            raise ValueError(f"未サポートのLLMプロバイダー: {provider}. config.jsonでllm_provider='bedrock'を設定してください")
 
     def __init_local__(self, config_path: str = "config.json"):
         """
@@ -109,12 +90,6 @@ class LLMFetcher:
         # ログの設定
         self._setup_logging()
 
-        # APIキーの設定
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key or api_key == "your_api_key_here":
-            self.logger.error("GEMINI_API_KEYが設定されていません")
-            raise ValueError("GEMINI_API_KEY環境変数を設定してください")
-
         # プロバイダーを決定
         provider = self.config.get("llm_provider", "bedrock")
         self.logger.info(f"LLMプロバイダー: {provider}")
@@ -133,18 +108,10 @@ class LLMFetcher:
             )
             self.logger.info(f"Bedrockクライアント初期化完了: {model_id}")
 
-        elif provider == "gemini":
-            # Google Gemini を使用
-            if genai is None:
-                self.logger.error("google-generativeaiパッケージがインストールされていません")
-                raise ImportError("google-generativeai が必要です")
-
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(self.config["gemini_model"])
-            self.logger.info(f"Geminiクライアント初期化完了: {self.config['gemini_model']}")
-
         else:
-            raise ValueError(f"未サポートのLLMプロバイダー: {provider}")
+            self.logger.error(f"未サポートのLLMプロバイダー: {provider}")
+            self.logger.error("現在はBedrock (Claude)のみサポートしています")
+            raise ValueError(f"未サポートのLLMプロバイダー: {provider}. config.jsonでllm_provider='bedrock'を設定してください")
 
         # プロンプトテンプレートの読み込み
         prompt_path = self.config.get("news_analysis_prompt_path", "news_analysis_prompt.txt")
@@ -220,10 +187,10 @@ class LLMFetcher:
         logs_dir = Path(self.config["logs_dir"])
         logs_dir.mkdir(exist_ok=True)
 
-        log_file = logs_dir / "gemini_fetcher.log"
+        log_file = logs_dir / "news_analyzer.log"
 
         # ロガーの設定
-        self.logger = logging.getLogger("GeminiFetcher")
+        self.logger = logging.getLogger("NewsAnalyzer")
         self.logger.setLevel(logging.INFO)
 
         # ファイルハンドラ
@@ -315,7 +282,7 @@ class LLMFetcher:
         articles_by_site = scraper.enrich_articles_with_content(articles_by_site)
 
         # 記事をフォーマット
-        formatted = scraper.format_articles_for_gemini(articles_by_site)
+        formatted = scraper.format_articles_for_llm(articles_by_site)
 
         # フォーマットされた記事をファイルに保存
         self._save_formatted_articles(formatted)
@@ -323,7 +290,7 @@ class LLMFetcher:
         # 分析プロンプトを生成
         prompt = self._create_news_analysis_prompt(formatted)
 
-        # Gemini APIで分析
+        # LLMで分析
         return self.fetch_response(prompt)
 
     def _save_formatted_articles(self, formatted_articles: str) -> str:
@@ -456,7 +423,7 @@ class LLMFetcher:
         """
         try:
             self.logger.info("=" * 80)
-            self.logger.info("Gemini News Analyzer - 処理を開始します")
+            self.logger.info("News Analyzer (Bedrock Claude) - 処理を開始します")
 
             # ニュース分析処理
             if self.config.get('news_scraping', {}).get('enabled', False):

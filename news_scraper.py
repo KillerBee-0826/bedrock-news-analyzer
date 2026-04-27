@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ニュースサイトスクレイピングモジュール
-複数のITニュースサイトから記事を取得し、Gemini API用にフォーマットします。
+複数のITニュースサイトから記事を取得し、LLM用にフォーマットします。
 """
 
 import re
@@ -713,9 +713,9 @@ class NewsScraper:
 
         return True
 
-    def format_articles_for_gemini(self, articles_by_site: Dict[str, List[dict]]) -> str:
+    def format_articles_for_llm(self, articles_by_site: Dict[str, List[dict]]) -> str:
         """
-        Gemini API用に記事をフォーマット
+        LLM用に記事をフォーマット
 
         Args:
             articles_by_site: サイト名をキーとした記事リストの辞書

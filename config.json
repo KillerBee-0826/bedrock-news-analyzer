@@ -6,8 +6,6 @@
   "bedrock_region": "us-east-1",
   "bedrock_max_tokens": 4096,
 
-  "gemini_model": "gemini-2.5-flash",
-
   "max_retries": 3,
   "retry_delay": 5,
   "responses_dir": "responses",
