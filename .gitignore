@@ -24,3 +24,12 @@ logs/cron.log
 # OS
 .DS_Store
 Thumbs.db
+
+# Lambda build artifacts
+lambda-function.zip
+lambda-layer.zip
+layer/
+output.json
+
+# User-generated data
+responses/
