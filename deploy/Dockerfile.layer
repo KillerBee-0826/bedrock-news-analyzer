@@ -1,0 +1,35 @@
+FROM public.ecr.aws/lambda/python:3.11
+
+# Lambda ENTRYPOINTをリセット（ビルド目的のため）
+ENTRYPOINT []
+
+# 作業ディレクトリを設定
+WORKDIR /build
+
+# requirements-lambda.txtをコピー
+COPY requirements-lambda.txt .
+
+# 依存パッケージをインストール
+RUN pip install --upgrade pip && \
+    pip install -r requirements-lambda.txt -t /build/python/ --no-cache-dir
+
+# 不要なファイルを削除してサイズ削減
+RUN echo "不要なファイルを削除中..." && \
+    # __pycache__ と .pyc ファイル
+    find /build/python -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /build/python -type f -name "*.pyc" -delete && \
+    # egg-info のみ削除（.dist-infoは保持 - 一部パッケージが必要とする）
+    find /build/python -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true && \
+    # テストファイル
+    find /build/python -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /build/python -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    # googleapiclient discovery cache（580ファイル、94MB）
+    rm -rf /build/python/googleapiclient/discovery_cache/documents 2>/dev/null || true && \
+    # babel locale data（en_US, ja_JP以外を削除）
+    find /build/python/babel/locale-data -type f ! -name "*en_US*" ! -name "*ja_JP*" -delete 2>/dev/null || true && \
+    # boto3/botocore documentation（念のため - requirements-lambda.txtにないので存在しないはず）
+    rm -rf /build/python/boto3/docs /build/python/botocore/docs /build/python/boto3/examples 2>/dev/null || true && \
+    echo "クリーンアップ完了"
+
+# デフォルトコマンド
+CMD ["bash"]

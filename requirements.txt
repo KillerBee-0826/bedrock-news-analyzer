@@ -1,6 +1,9 @@
 google-generativeai>=0.3.2
 python-dotenv>=1.0.0
 
+# AWS SDK (Lambda環境では組み込み済みだが、ローカル開発用に追加)
+boto3>=1.26.0               # AWS SDK for Python
+
 # Web scraping dependencies
 feedparser>=6.0.10          # RSSフィード解析
 beautifulsoup4>=4.12.0      # HTML解析

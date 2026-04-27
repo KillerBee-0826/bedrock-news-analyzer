@@ -1,6 +1,13 @@
 {
   "question": "",
+
+  "llm_provider": "bedrock",
+  "bedrock_model": "us.anthropic.claude-sonnet-4-6",
+  "bedrock_region": "us-east-1",
+  "bedrock_max_tokens": 4096,
+
   "gemini_model": "gemini-2.5-flash",
+
   "max_retries": 3,
   "retry_delay": 5,
   "responses_dir": "responses",
@@ -31,6 +38,7 @@
         "rss_url": "https://rss.itmedia.co.jp/rss/2.0/ait.xml",
         "fallback_rss_paths": ["/feed", "/rss", "/index.rdf"],
         "scraper_type": "rss",
+        "encoding_fix": "chardet",
         "content_selectors": {
           "article": [".article-body", "article", "main"],
           "remove": [".ad", ".related", ".sns-share", "nav", "footer"]
