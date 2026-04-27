@@ -35,10 +35,10 @@ aws s3 mb s3://gemini-news-analyzer --region ap-northeast-1
 
 ```bash
 # config.jsonをS3にアップロード
-aws s3 cp config.json s3://gemini-news-analyzer/config/config.json
+aws s3 cp config/config.json s3://gemini-news-analyzer/config/config.json
 
 # news_analysis_prompt.txtをS3にアップロード
-aws s3 cp news_analysis_prompt.txt s3://gemini-news-analyzer/config/news_analysis_prompt.txt
+aws s3 cp config/news_analysis_prompt.txt s3://gemini-news-analyzer/config/news_analysis_prompt.txt
 
 # アップロード確認
 aws s3 ls s3://gemini-news-analyzer/config/

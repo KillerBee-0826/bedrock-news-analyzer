@@ -10,7 +10,7 @@
   "retry_delay": 5,
   "responses_dir": "responses",
   "logs_dir": "logs",
-  "news_analysis_prompt_path": "news_analysis_prompt.txt",
+  "news_analysis_prompt_path": "config/news_analysis_prompt.txt",
 
   "news_scraping": {
     "enabled": true,

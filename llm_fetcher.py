@@ -69,7 +69,7 @@ class LLMFetcher:
             self.logger.error("現在はBedrock (Claude)のみサポートしています")
             raise ValueError(f"未サポートのLLMプロバイダー: {provider}. config.jsonでllm_provider='bedrock'を設定してください")
 
-    def __init_local__(self, config_path: str = "config.json"):
+    def __init_local__(self, config_path: str = "config/config.json"):
         """
         ローカル環境用初期化（互換性のため残す）
 
@@ -114,7 +114,7 @@ class LLMFetcher:
             raise ValueError(f"未サポートのLLMプロバイダー: {provider}. config.jsonでllm_provider='bedrock'を設定してください")
 
         # プロンプトテンプレートの読み込み
-        prompt_path = self.config.get("news_analysis_prompt_path", "news_analysis_prompt.txt")
+        prompt_path = self.config.get("news_analysis_prompt_path", "config/news_analysis_prompt.txt")
         self.prompt_template = self._load_prompt_template(prompt_path)
 
         # S3Handlerはローカル環境では不使用
