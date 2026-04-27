@@ -48,7 +48,7 @@ aws s3 ls s3://gemini-news-analyzer/config/
 
 Lambda実行用のIAMロールを作成します。
 
-**信頼ポリシー（trust-policy.json）:**
+**信頼ポリシー（deploy/policies/trust-policy.json）:**
 ```json
 {
   "Version": "2012-10-17",
@@ -64,7 +64,7 @@ Lambda実行用のIAMロールを作成します。
 }
 ```
 
-**権限ポリシー（permissions-policy.json）:**
+**権限ポリシー（deploy/policies/permissions-policy.json）:**
 ```json
 {
   "Version": "2012-10-17",
@@ -101,13 +101,13 @@ Lambda実行用のIAMロールを作成します。
 # IAMロールを作成
 aws iam create-role \
   --role-name lambda-gemini-news-analyzer \
-  --assume-role-policy-document file://trust-policy.json
+  --assume-role-policy-document file://deploy/policies/trust-policy.json
 
 # 権限ポリシーをアタッチ
 aws iam put-role-policy \
   --role-name lambda-gemini-news-analyzer \
   --policy-name gemini-news-analyzer-permissions \
-  --policy-document file://permissions-policy.json
+  --policy-document file://deploy/policies/permissions-policy.json
 
 # ロールARNを取得（後で使用）
 aws iam get-role --role-name lambda-gemini-news-analyzer --query 'Role.Arn' --output text
@@ -292,7 +292,7 @@ aws logs tail /aws/lambda/gemini-news-analyzer --follow
 aws iam put-role-policy \
   --role-name lambda-gemini-news-analyzer \
   --policy-name s3-access \
-  --policy-document file://permissions-policy.json
+  --policy-document file://deploy/policies/permissions-policy.json
 ```
 
 ### エラー: GEMINI_API_KEY未設定
