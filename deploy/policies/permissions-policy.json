@@ -6,14 +6,23 @@
       "Action": [
         "s3:GetObject"
       ],
-      "Resource": "arn:aws:s3:::gemini-news-analyzer/config/*"
+      "Resource": "arn:aws:s3:::claude-news-analyzer/config/*"
     },
     {
       "Effect": "Allow",
       "Action": [
-        "s3:PutObject"
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:HeadObject"
       ],
-      "Resource": "arn:aws:s3:::gemini-news-analyzer/responses/*"
+      "Resource": "arn:aws:s3:::claude-news-analyzer/responses/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::claude-news-analyzer"
     },
     {
       "Effect": "Allow",

@@ -29,7 +29,7 @@ except ImportError:
 
 
 class LLMFetcher:
-    """LLM (Bedrock/Gemini) を使用して質問の回答を取得するクラス（Lambda対応版）"""
+    """LLM (Bedrock) を使用して質問の回答を取得するクラス（Lambda対応版）"""
 
     def __init__(self, config: dict, prompt_template: str, s3_handler, logger: logging.Logger):
         """
@@ -46,21 +46,27 @@ class LLMFetcher:
         self.s3_handler = s3_handler
         self.logger = logger
 
-        # プロバイダーを決定（bedrock または gemini）
+        # プロバイダーを決定（bedrock）
         provider = self.config.get("llm_provider", "bedrock")
         self.logger.info(f"LLMプロバイダー: {provider}")
 
         if provider == "bedrock":
             # Amazon Bedrock (Claude) を使用
-            model_id = self.config.get("bedrock_model", "anthropic.claude-sonnet-4-5-v2:0")
+            model_id = self.config.get("bedrock_model", "us.anthropic.claude-sonnet-4-5-v2:0")
             region = self.config.get("bedrock_region", "us-east-1")
             max_tokens = self.config.get("bedrock_max_tokens", 4096)
+            read_timeout = self.config.get("bedrock_read_timeout", 600)
+            connect_timeout = self.config.get("bedrock_connect_timeout", 10)
+            retry_max_attempts = self.config.get("bedrock_retry_max_attempts", 0)
 
             self.model = BedrockClient(
                 model_id=model_id,
                 region=region,
                 logger=self.logger,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                read_timeout=read_timeout,
+                connect_timeout=connect_timeout,
+                retry_max_attempts=retry_max_attempts
             )
             self.logger.info(f"Bedrockクライアント初期化完了: {model_id}")
 
@@ -96,15 +102,21 @@ class LLMFetcher:
 
         if provider == "bedrock":
             # Amazon Bedrock (Claude) を使用
-            model_id = self.config.get("bedrock_model", "anthropic.claude-sonnet-4-5-v2:0")
+            model_id = self.config.get("bedrock_model", "us.anthropic.claude-sonnet-4-5-v2:0")
             region = self.config.get("bedrock_region", "us-east-1")
             max_tokens = self.config.get("bedrock_max_tokens", 4096)
+            read_timeout = self.config.get("bedrock_read_timeout", 600)
+            connect_timeout = self.config.get("bedrock_connect_timeout", 10)
+            retry_max_attempts = self.config.get("bedrock_retry_max_attempts", 0)
 
             self.model = BedrockClient(
                 model_id=model_id,
                 region=region,
                 logger=self.logger,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                read_timeout=read_timeout,
+                connect_timeout=connect_timeout,
+                retry_max_attempts=retry_max_attempts
             )
             self.logger.info(f"Bedrockクライアント初期化完了: {model_id}")
 
@@ -213,7 +225,7 @@ class LLMFetcher:
 
     def fetch_response(self, question: str) -> str:
         """
-        LLM (Bedrock/Gemini) に質問を送信し、回答を取得する（リトライ機能付き）
+        LLM (Bedrock) に質問を送信し、回答を取得する（リトライ機能付き）
 
         Args:
             question: LLMに送信する質問
@@ -231,7 +243,7 @@ class LLMFetcher:
             try:
                 self.logger.info(f"質問を送信中 (試行 {attempt + 1}/{max_retries})")
 
-                # generate_content()はBedrock/Gemini両対応
+                # generate_content()はBedrock対応
                 response_text = self.model.generate_content(question)
 
                 if not response_text:
@@ -271,7 +283,7 @@ class LLMFetcher:
         ニュース分析を実行
 
         Returns:
-            LLM (Bedrock/Gemini) による分析結果
+            LLM (Bedrock) による分析結果
         """
         from news_scraper import NewsScraper
 
@@ -435,7 +447,7 @@ class LLMFetcher:
 
             # 既存の質問処理（オプション）
             question = self.config.get("question", "")
-            if question and question != "ここに毎日Geminiに投げたい質問を入力してください" and question.strip():
+            if question and question != "ここに毎日Claudeに投げたい質問を入力してください" and question.strip():
                 self.logger.info(f"追加質問を処理: {question[:50]}...")
                 response = self.fetch_response(question)
                 self.save_response(response, section="question")

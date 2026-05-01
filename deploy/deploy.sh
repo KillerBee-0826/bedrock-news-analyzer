@@ -5,14 +5,14 @@
 set -e
 
 # デフォルト設定
-FUNCTION_NAME="${LAMBDA_FUNCTION_NAME:-gemini-news-analyzer}"
-LAYER_NAME="${LAMBDA_LAYER_NAME:-gemini-news-analyzer-dependencies}"
+FUNCTION_NAME="${LAMBDA_FUNCTION_NAME:-claude-news-analyzer}"
+LAYER_NAME="${LAMBDA_LAYER_NAME:-claude-news-analyzer-dependencies}"
 RUNTIME="python3.11"
 HANDLER="lambda_handler.lambda_handler"
 TIMEOUT=900  # 15分
 MEMORY=1536  # 1.5GB
 REGION="${AWS_REGION:-ap-northeast-1}"
-S3_BUCKET="${S3_BUCKET_NAME:-gemini-news-analyzer}"
+S3_BUCKET="${S3_BUCKET_NAME:-claude-news-analyzer}"
 
 # IAMロールARN（環境変数または手動設定）
 ROLE_ARN="${LAMBDA_ROLE_ARN}"
@@ -100,7 +100,7 @@ if aws lambda get-function --function-name ${FUNCTION_NAME} --region ${REGION} 2
       --timeout ${TIMEOUT} \
       --memory-size ${MEMORY} \
       --layers ${LAYER_ARN} \
-      --environment "Variables={S3_BUCKET_NAME=${S3_BUCKET}}" \
+      --environment "Variables={S3_BUCKET_NAME=${S3_BUCKET},TZ=Asia/Tokyo}" \
       --region ${REGION} \
       --no-cli-pager > /dev/null
 
@@ -130,7 +130,7 @@ else
       --memory-size ${MEMORY} \
       --layers ${LAYER_ARN} \
       --zip-file fileb://lambda-function.zip \
-      --environment "Variables={S3_BUCKET_NAME=${S3_BUCKET}}" \
+      --environment "Variables={S3_BUCKET_NAME=${S3_BUCKET},TZ=Asia/Tokyo}" \
       --region ${REGION} \
       --no-cli-pager > /dev/null
 
@@ -144,29 +144,19 @@ echo "✓ Lambda Layer ARN: ${LAYER_ARN}"
 echo "✓ リージョン: ${REGION}"
 echo ""
 echo "次のステップ:"
-echo "  1. Lambda環境変数を設定:"
-echo "     aws lambda update-function-configuration \\"
-echo "       --function-name ${FUNCTION_NAME} \\"
-echo "       --environment \"Variables={S3_BUCKET_NAME=${S3_BUCKET},GEMINI_API_KEY=YOUR_API_KEY}\" \\"
-echo "       --region ${REGION}"
-echo ""
-echo "  2. S3バケットに設定ファイルをアップロード:"
-echo "     aws s3 cp config.json s3://${S3_BUCKET}/config/config.json"
-echo "     aws s3 cp news_analysis_prompt.txt s3://${S3_BUCKET}/config/news_analysis_prompt.txt"
-echo ""
-echo "  3. Lambda関数をテスト実行:"
+echo "  1. Lambda関数をテスト実行:"
 echo "     aws lambda invoke \\"
 echo "       --function-name ${FUNCTION_NAME} \\"
 echo "       --region ${REGION} \\"
 echo "       output.json"
 echo ""
-echo "  4. EventBridgeスケジュールを設定（毎日0:00 UTC = 9:00 JST）:"
+echo "  2. EventBridgeスケジュールを設定（毎日0:00 UTC = 9:00 JST）:"
 echo "     aws events put-rule \\"
-echo "       --name gemini-news-analyzer-daily \\"
+echo "       --name claude-news-analyzer-daily \\"
 echo "       --schedule-expression 'cron(0 0 * * ? *)' \\"
 echo "       --region ${REGION}"
 echo ""
 echo "     aws events put-targets \\"
-echo "       --rule gemini-news-analyzer-daily \\"
+echo "       --rule claude-news-analyzer-daily \\"
 echo "       --targets \"Id=1,Arn=arn:aws:lambda:${REGION}:YOUR_ACCOUNT_ID:function:${FUNCTION_NAME}\" \\"
 echo "       --region ${REGION}"

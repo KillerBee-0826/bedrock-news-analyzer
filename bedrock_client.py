@@ -10,6 +10,7 @@ from typing import Optional
 
 try:
     import boto3
+    from botocore.config import Config
     from botocore.exceptions import ClientError
 except ImportError as e:
     print(f"必要なパッケージがインストールされていません: {e}")
@@ -20,15 +21,27 @@ except ImportError as e:
 class BedrockClient:
     """Amazon Bedrockを使用してClaudeと対話するクライアント"""
 
-    def __init__(self, model_id: str, region: str, logger: logging.Logger, max_tokens: int = 4096):
+    def __init__(
+        self,
+        model_id: str,
+        region: str,
+        logger: logging.Logger,
+        max_tokens: int = 4096,
+        read_timeout: int = 600,
+        connect_timeout: int = 10,
+        retry_max_attempts: int = 0,
+    ):
         """
         Bedrockクライアントを初期化
 
         Args:
-            model_id: Bedrockモデ�ID（例: anthropic.claude-sonnet-4-5-v2:0）
+            model_id: BedrockモデルID（例: us.anthropic.claude-sonnet-4-5-v2:0）
             region: AWSリージョン（例: us-east-1）
             logger: ロガーインスタンス
             max_tokens: 最大トークン数（デフォルト: 4096）
+            read_timeout: レスポンス読み取りタイムアウト秒数
+            connect_timeout: 接続タイムアウト秒数
+            retry_max_attempts: botocore内部リトライ回数（0で無効）
         """
         self.model_id = model_id
         self.region = region
@@ -39,16 +52,25 @@ class BedrockClient:
         try:
             self.bedrock_runtime = boto3.client(
                 'bedrock-runtime',
-                region_name=region
+                region_name=region,
+                config=Config(
+                    read_timeout=read_timeout,
+                    connect_timeout=connect_timeout,
+                    retries={'max_attempts': retry_max_attempts}
+                )
             )
-            self.logger.info(f"Bedrockクライアント初期化完了: {model_id} @ {region}")
+            self.logger.info(
+                f"Bedrockクライアント初期化完了: {model_id} @ {region} "
+                f"(read_timeout={read_timeout}s, connect_timeout={connect_timeout}s, "
+                f"retry_max_attempts={retry_max_attempts})"
+            )
         except Exception as e:
             self.logger.error(f"Bedrockクライアント初期化エラー: {e}")
             raise
 
     def generate_content(self, prompt: str, max_tokens: Optional[int] = None) -> str:
         """
-        Claudeでテキストを生成（Gemini互換インターフェース）
+        Claudeでテキストを生成
 
         Args:
             prompt: 入力プロンプト
@@ -89,19 +111,26 @@ class BedrockClient:
 
             # トークン使用量を保存
             self.last_usage = response_body.get('usage', {})
+            stop_reason = response_body.get('stop_reason')
 
             # テキストコンテンツを抽出
             content = response_body.get('content', [])
             if not content:
                 raise ValueError("Bedrockからのレスポンスが空です")
 
-            text = content[0].get('text', '')
+            text = ''.join(block.get('text', '') for block in content if block.get('type') == 'text')
 
             self.logger.debug(f"Bedrock API呼び出し成功: {len(text)} 文字")
             self.logger.info(
                 f"Token usage: input={self.last_usage.get('input_tokens', 0)}, "
-                f"output={self.last_usage.get('output_tokens', 0)}"
+                f"output={self.last_usage.get('output_tokens', 0)}, "
+                f"stop_reason={stop_reason}"
             )
+            if stop_reason == 'max_tokens':
+                self.logger.warning(
+                    "Claudeの出力がmax_tokens上限に到達しました。"
+                    "bedrock_max_tokens、入力記事数、プロンプトの要約粒度を見直してください。"
+                )
 
             return text
 

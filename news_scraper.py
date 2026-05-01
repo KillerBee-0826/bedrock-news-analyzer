@@ -747,7 +747,7 @@ class NewsScraper:
 
                 # 記事本文を追加
                 if article.get('content'):
-                    # 最大5000文字に制限（Geminiトークン対策）
+                    # 最大5000文字に制限（トークン対策）
                     content = article['content'][:5000]
                     if len(article['content']) > 5000:
                         content += "...(省略)"

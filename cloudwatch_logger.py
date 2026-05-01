@@ -8,7 +8,7 @@ import logging
 import sys
 
 
-def setup_cloudwatch_logger(name: str = 'GeminiFetcher', level: int = logging.INFO) -> logging.Logger:
+def setup_cloudwatch_logger(name: str = 'ClaudeFetcher', level: int = logging.INFO) -> logging.Logger:
     """
     CloudWatch Logs用ロガーを設定
 
@@ -48,7 +48,7 @@ def setup_cloudwatch_logger(name: str = 'GeminiFetcher', level: int = logging.IN
     return logger
 
 
-def setup_minimal_logger(name: str = 'GeminiFetcher', level: int = logging.INFO) -> logging.Logger:
+def setup_minimal_logger(name: str = 'ClaudeFetcher', level: int = logging.INFO) -> logging.Logger:
     """
     最小限のロガー設定（Lambda環境用）
 
@@ -67,7 +67,7 @@ def setup_minimal_logger(name: str = 'GeminiFetcher', level: int = logging.INFO)
     return logger
 
 
-def get_logger(name: str = 'GeminiFetcher') -> logging.Logger:
+def get_logger(name: str = 'ClaudeFetcher') -> logging.Logger:
     """
     ロガーインスタンスを取得
 

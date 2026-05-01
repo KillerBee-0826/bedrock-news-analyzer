@@ -1,486 +1,208 @@
-# Gemini自動ニュース分析システム
+# Bedrock Claude 自動ニュース分析Lambda
 
-毎日指定の時間に日本の主要技術メディアから記事を収集し、完全な記事本文を取得して、Google Gemini APIで深い分析レポートを自動生成するシステムです。
+AWS Lambda上で動作し、毎日日本の主要技術メディアから記事を収集・分析し、Amazon Bedrock上のClaudeモデルでレポートを生成するシステムです。
 
-## 主要機能
+## アーキテクチャ
 
-### ニュース収集・分析
-- **6つの主要技術メディアから自動収集**: @IT、ITmedia エンタープライズ、ITmedia AI+、クラウドWatch、AI Watch、日経クロステック
-- **RSSフィードからメタデータ取得**: タイトル、URL、概要、発行日時
-- **記事本文の完全取得**: trafilaturaを使用した高精度な本文抽出（85%以上の成功率）
-- **エンコーディング自動対応**: Shift_JIS等の日本語エンコーディングを自動検出
-- **並列処理**: 5並列で高速処理（約3秒で32記事取得）
+このシステムは、以下のAWSサービスを連携させたサーバーレスアーキテクチャで構築されています。
 
-### Gemini AI分析
-- 記事本文に基づく深掘りトレンド分析
-- 注目ニュースの詳細分析（200-300文字）
-- 技術分野の自動分類（AI/機械学習、セキュリティ、クラウド等）
-- ビジネスインパクト分析
+```mermaid
+graph TD
+    subgraph AWS
+        EventBridge(EventBridge<br/>Scheduler) --> Lambda(AWS Lambda<br/>claude-news-analyzer)
+        
+        subgraph "Amazon S3"
+            direction LR
+            S3Config(config.json)
+            S3Prompt(prompt.txt)
+            S3Responses(分析結果)
+        end
 
-### システム機能
-- 3回までの自動リトライ（指数バックオフ）
-- 詳細なログ記録（成功率、文字数統計）
-- エラー時も処理継続（記事ごとの独立したエラーハンドリング）
-- 簡単な設定ファイルでカスタマイズ可能
+        Lambda -- 読み込み --> S3Config
+        Lambda -- 読み込み --> S3Prompt
+        Lambda -- 呼び出し --> Bedrock(Amazon Bedrock<br/>Claude Sonnet)
+        Lambda -- 書き込み --> S3Responses
+        Lambda -- ログ出力 --> CloudWatch(CloudWatch Logs)
+    end
 
-## 必要要件
+    subgraph "外部サイト"
+        NewsSites(ニュースサイト)
+    end
 
-- Python 3.9以上（推奨: 3.10+）
-- Google Gemini APIキー
-- macOS / Linux（cronを使用）
-
-## セットアップ手順
-
-### 1. 依存パッケージのインストール
-
-```bash
-pip3 install -r requirements.txt
+    Lambda -- スクレイピング --> NewsSites
 ```
 
-### 2. APIキーの設定
+1.  **Amazon EventBridge**: 毎日定刻（例: JST 9:00）にLambda関数をトリガーします。
+2.  **AWS Lambda**: メインの処理を実行するPythonアプリケーション。
+    -   S3から設定ファイルとプロンプトテンプレートを読み込みます。
+    -   `news_scraper.py` を使用して、複数の技術ニュースサイトから記事をスクレイピングします。
+    -   `bedrock_client.py` を介して、収集した記事データをBedrock上のClaudeモデルに送信し、分析レポートを要求します。
+    -   生成されたレポートと収集した記事一覧をS3バケットに保存します。
+3.  **Amazon S3**: 設定、プロンプト、および出力結果を永続化します。
+4.  **Amazon Bedrock**: Claude Sonnetなどの高性能なLLMを提供し、高度なテキスト分析を実行します。
+5.  **Amazon CloudWatch Logs**: Lambda関数の実行ログを収集・保存し、監視とデバッグを容易にします。
 
-`.env.example`をコピーして`.env`ファイルを作成し、APIキーを設定します：
+## 主な機能
 
-```bash
-cp .env.example .env
-```
+-   **サーバーレス**: AWS Lambdaで実行され、サーバーのプロビジョニングや管理が不要です。
+-   **自動実行**: Amazon EventBridgeにより、スケジュールベースで完全に自動化されています。
+-   **ニュース収集**: 6つの主要技術メディア（@IT, ITmediaなど）からRSS経由で記事を自動収集します。
+-   **高精度な本文抽出**: `trafilatura`ライブラリとサイト固有のセレクタを組み合わせた3段階のフォールバック戦略により、広告などを除外した本文を高精度で抽出します。
+-   **AI分析**: Amazon Bedrockを介してClaudeモデルを利用し、トレンド分析、注目ニュースの深掘り、技術分類などを実行します。
+-   **設定の外部化**: `config.json`と`news_analysis_prompt.txt`をS3で管理するため、コードを再デプロイすることなく設定やプロンプトを変更できます。
+-   **簡単なデプロイ**: シェルスクリプト (`deploy/deploy.sh`) により、Lambda Layerと関数コードを一度にデプロイできます。
 
-`.env`ファイルを編集してAPIキーを設定：
+## 使用技術
 
-```
-GEMINI_API_KEY=あなたのAPIキーをここに入力
-```
-
-**APIキーの取得方法**:
-1. [Google AI Studio](https://makersuite.google.com/app/apikey)にアクセス
-2. 「Create API Key」をクリック
-3. APIキーをコピーして`.env`ファイルに貼り付け
-
-### 3. ニュース収集の設定
-
-`config.json`ファイルで、ニュース収集と記事本文取得の設定を確認・カスタマイズできます：
-
-```json
-{
-  "question": "",
-  "gemini_model": "gemini-2.5-flash",
-  "max_retries": 3,
-  "retry_delay": 5,
-  "responses_dir": "responses",
-  "logs_dir": "logs",
-  
-  "news_scraping": {
-    "enabled": true,
-    "scrape_yesterday_articles": true,
-    "timezone": "Asia/Tokyo",
-    "timeout_per_site": 30,
-    "parallel_workers": 3,
-    "max_articles_per_site": 30,
-    "user_agent": "Mozilla/5.0 (compatible; NewsBot/1.0)",
-    
-    "content_fetching": {
-      "enabled": true,
-      "timeout_per_article": 10,
-      "parallel_content_workers": 5,
-      "max_content_length": 50000,
-      "min_content_length": 200
-    },
-    
-    "sites": [
-      {
-        "name": "@IT",
-        "rss_url": "https://rss.itmedia.co.jp/rss/2.0/ait.xml",
-        "encoding_fix": "chardet",
-        "content_selectors": {
-          "article": [".article-body", "article", "main"],
-          "remove": [".ad", ".related", ".sns-share", "nav", "footer"]
-        }
-      }
-      // ... 他5サイト
-    ]
-  }
-}
-```
-
-**主要設定項目**:
-- `news_scraping.enabled`: ニュース収集機能のON/OFF
-- `content_fetching.enabled`: 記事本文取得のON/OFF（falseでメタデータのみ）
-- `max_articles_per_site`: サイトごとの最大記事数（デフォルト: 30）
-- `parallel_content_workers`: 記事本文取得の並列処理数（デフォルト: 5）
-
-### 4. 動作テスト
-
-手動で実行して動作を確認します：
-
-```bash
-python3 gemini_fetcher.py
-```
-
-成功すると、`responses/`ディレクトリに2つのファイルが作成されます：
-- `YYYY-MM-DD_articles.txt`: 収集した記事一覧（メタデータ + 本文）
-- `YYYY-MM-DD.txt`: Geminiによる分析レポート
-
-**実行例**:
-```
-2026-04-23 14:12:10 - INFO - スクレイピング開始: 6サイトを3並列で処理
-2026-04-23 14:12:13 - INFO - スクレイピング完了: 合計32記事取得
-2026-04-23 14:12:13 - INFO - 記事本文取得開始: 32件を5並列で処理
-2026-04-23 14:12:16 - INFO - 記事本文取得完了:
-2026-04-23 14:12:16 - INFO -   総数: 32件
-2026-04-23 14:12:16 - INFO -   成功: 32件 (100.0%)
-2026-04-23 14:12:16 - INFO -   失敗: 0件
-2026-04-23 14:12:16 - INFO -   平均文字数: 1530文字
-```
-
-### 5. cron設定（自動実行）
-
-毎日朝9:00に自動実行するには、crontabを設定します。
-
-#### crontabの編集
-
-```bash
-crontab -e
-```
-
-#### エントリの追加
-
-以下の行を追加します（パスは環境に合わせて変更してください）：
-
-```bash
-0 9 * * * cd /Users/queenbee/git/autoLLMGetter && /usr/bin/python3 gemini_fetcher.py >> logs/cron.log 2>&1
-```
-
-**重要なポイント**:
-- `cd /Users/queenbee/git/autoLLMGetter` の部分は、実際のプロジェクトパスに変更してください
-- `/usr/bin/python3` は `which python3` コマンドで確認したPythonのパスを使用してください
-
-#### cron設定の確認
-
-```bash
-crontab -l
-```
-
-#### テスト実行
-
-次の分に実行するように一時的に設定してテストすることをお勧めします：
-
-```bash
-# 例: 現在時刻が10:30の場合、10:31に実行
-31 10 * * * cd /Users/queenbee/git/autoLLMGetter && /usr/bin/python3 gemini_fetcher.py >> logs/cron.log 2>&1
-```
-
-実行後、以下を確認：
-- `logs/cron.log` にcronからの出力があるか
-- `logs/gemini_fetcher.log` に実行ログがあるか
-- `responses/` に今日の日付のファイルが作成されているか
-
-問題なければ、実際の実行時刻（9:00）に変更してください。
+-   **クラウド**: AWS Lambda, Amazon S3, Amazon Bedrock, Amazon CloudWatch, Amazon EventBridge
+-   **言語**: Python 3.11
+-   **主要ライブラリ**: `boto3`, `requests`, `feedparser`, `trafilatura`, `beautifulsoup4`, `chardet`
 
 ## ディレクトリ構造
 
 ```
 autoLLMGetter/
-├── gemini_fetcher.py       # メインスクリプト
+├── lambda_handler.py       # Lambda関数のエントリーポイント
+├── llm_fetcher.py          # Bedrock呼び出しと全体フロー制御
+├── bedrock_client.py       # Amazon Bedrock APIクライアント
 ├── news_scraper.py         # ニュース収集・記事本文取得モジュール
-├── config.json             # 設定ファイル
-├── .env                    # APIキー（gitignore対象）
-├── .env.example            # 環境変数サンプル
-├── requirements.txt        # Python依存パッケージ
-├── .gitignore              # Git除外設定
-├── CLAUDE.md               # Claude Code向けプロジェクトドキュメント
-├── responses/              # 出力ファイル
-│   ├── 2026-04-23_articles.txt  # 記事一覧（メタデータ + 本文）
-│   └── 2026-04-23.txt           # Gemini分析レポート
-├── logs/                   # ログファイル
-│   ├── gemini_fetcher.log  # 実行ログ
-│   └── cron.log            # cronの出力ログ
+├── s3_handler.py           # S3操作ヘルパー
+├── cloudwatch_logger.py    # CloudWatch Logs用ロガー
+├── config/
+│   ├── config.json         # 設定ファイル（S3に配置）
+│   └── news_analysis_prompt.txt # プロンプトテンプレート（S3に配置）
+├── deploy/
+│   ├── deploy.sh           # デプロイスクリプト
+│   ├── build_layer.sh      # Lambda Layer構築スクリプト
+│   └── policies/           # IAMポリシーサンプル
+├── requirements.txt        # ローカルテスト用依存関係
+├── requirements-lambda.txt # Lambda Layer用依存関係
 └── README.md               # このファイル
 ```
 
-## 使い方
+## デプロイ手順
 
-### 収集対象サイトの変更
+### 1. 前提条件
 
-`config.json`の`news_scraping.sites`配列を編集して、収集するサイトを追加・削除できます：
+-   [AWS CLI](https://aws.amazon.com/cli/)がインストールされ、認証情報が設定済みであること。
+-   デプロイ先のAWSリージョンとS3バケット名、IAMロールのARNを決定しておくこと。
+
+### 2. IAMロールの作成
+
+Lambda関数に以下の権限を持つIAMロールが必要です。
+
+-   **信頼関係**: `lambda.amazonaws.com`
+-   **権限ポリシー**: 
+    -   `AWSLambdaBasicExecutionRole` (CloudWatch Logsへの書き込み)
+    -   `AmazonS3FullAccess` (または特定のバケットへの `s3:GetObject`, `s3:PutObject`)
+    -   `BedrockFullAccess` (または特定のモデルに対する `bedrock:InvokeModel`)
+
+サンプルポリシーは `deploy/policies/permissions-policy.json` を参照してください。
+
+### 3. 設定ファイルの準備とアップロード
+
+1.  S3バケットを作成します。
+    ```bash
+    aws s3 mb s3://<your-bucket-name> --region <your-region>
+    ```
+2.  `config/config.json` と `config/news_analysis_prompt.txt` を編集します。
+3.  編集したファイルをS3バケットの `config/` プレフィックスにアップロードします。
+    ```bash
+    aws s3 cp config/config.json s3://<your-bucket-name>/config/config.json
+    aws s3 cp config/news_analysis_prompt.txt s3://<your-bucket-name>/config/news_analysis_prompt.txt
+    ```
+
+### 4. デプロイスクリプトの実行
+
+1.  `deploy/deploy.sh` を開き、環境に合わせて変数を設定するか、環境変数としてエクスポートします。
+    ```bash
+    export LAMBDA_ROLE_ARN="arn:aws:iam::123456789012:role/your-lambda-role"
+    export S3_BUCKET_NAME="your-bucket-name"
+    export AWS_REGION="ap-northeast-1"
+    ```
+2.  デプロイスクリプトを実行します。
+    ```bash
+    ./deploy/deploy.sh
+    ```
+    これにより、`requirements-lambda.txt` に基づくLambda Layerが構築・公開され、関数コードがパッケージ化されてデプロイされます。
+
+### 5. 定期実行の設定 (EventBridge)
+
+デプロイ成功後、表示されるAWS CLIコマンドを参考にEventBridgeルールを作成し、Lambda関数をターゲットとして設定します。
+
+1.  **ルールを作成** (毎日 00:00 UTC / 09:00 JST に実行):
+    ```bash
+    aws events put-rule \
+      --name claude-news-analyzer-daily \
+      --schedule-expression 'cron(0 0 * * ? *)' \
+      --region ${AWS_REGION}
+    ```
+2.  **ターゲットを設定**:
+    ```bash
+    # YOUR_ACCOUNT_IDとFUNCTION_NAMEを実際の値に置き換えてください
+    FUNCTION_ARN="arn:aws:lambda:${AWS_REGION}:YOUR_ACCOUNT_ID:function:claude-news-analyzer"
+
+    aws events put-targets \
+      --rule claude-news-analyzer-daily \
+      --targets "Id=1,Arn=${FUNCTION_ARN}" \
+      --region ${AWS_REGION}
+    ```
+3.  **Lambdaにトリガー権限を追加**:
+    ```bash
+    aws lambda add-permission \
+      --function-name claude-news-analyzer \
+      --statement-id EventBridgeInvoke \
+      --action "lambda:InvokeFunction" \
+      --principal events.amazonaws.com \
+      --source-arn arn:aws:events:${AWS_REGION}:YOUR_ACCOUNT_ID:rule/claude-news-analyzer-daily \
+      --region ${AWS_REGION}
+    ```
+
+## ローカルでのテスト
+
+`lambda_handler.py` には、ローカル環境でLambda関数の動作をシミュレートするためのテスト関数が含まれています。
+
+1.  **依存関係のインストール**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  **AWS認証情報の設定**: ローカル環境でAWSの認証情報（例: `~/.aws/credentials`）が設定されていることを確認してください。
+3.  **環境変数の設定**:
+    ```bash
+    export S3_BUCKET_NAME="your-s3-bucket-name"
+    ```
+4.  **テストの実行**:
+    ```bash
+    python lambda_handler.py
+    ```
+    これにより、`local_test()` 関数が実行され、実際の `lambda_handler` がモックイベントで呼び出されます。処理結果はコンソールに出力されます。
+
+## 設定ファイル (`config.json`)
+
+S3に配置する `config.json` でシステムの挙動を制御します。
 
 ```json
 {
+  "llm_provider": "bedrock",
+  "bedrock_model": "anthropic.claude-3-sonnet-20240229-v1:0", // 使用するBedrockモデルID
+  "bedrock_region": "us-east-1", // Bedrockが利用可能なリージョン
+  "bedrock_max_tokens": 4096,
+  "max_retries": 3,
+  "retry_delay": 5,
   "news_scraping": {
+    "enabled": true,
+    "scrape_yesterday_articles": true, // true:前日, false:当日
+    "timezone": "Asia/Tokyo",
+    "parallel_workers": 3, // RSS取得の並列数
+    "max_articles_per_site": 30,
+    "content_fetching": {
+      "enabled": true, // 本文取得を有効化
+      "parallel_content_workers": 5, // 本文取得の並列数
+      "min_content_length": 200
+    },
     "sites": [
-      {
-        "name": "新しいサイト",
-        "rss_url": "https://example.com/rss.xml",
-        "encoding_fix": "chardet",  // 必要な場合のみ
-        "content_selectors": {
-          "article": [".article", "article", "main"],
-          "remove": [".ad", "nav", "footer"]
-        }
-      }
+      // 収集対象サイトのリスト
     ]
   }
 }
 ```
-
-### 記事本文取得の無効化
-
-記事本文取得が不要な場合（メタデータのみで十分な場合）は、無効化できます：
-
-```json
-{
-  "news_scraping": {
-    "content_fetching": {
-      "enabled": false
-    }
-  }
-}
-```
-
-これにより、実行時間が短縮され（約1分）、RSSの概要のみでGemini分析が行われます。
-
-### ログの確認
-
-実行ログを確認：
-
-```bash
-tail -f logs/gemini_fetcher.log
-```
-
-cronのログを確認：
-
-```bash
-tail -f logs/cron.log
-```
-
-### 結果の確認
-
-```bash
-# 今日の記事一覧を表示（メタデータ + 本文）
-cat responses/$(date +%Y-%m-%d)_articles.txt
-
-# 今日の分析レポートを表示
-cat responses/$(date +%Y-%m-%d).txt
-
-# 全ての結果を一覧
-ls -lt responses/
-
-# 記事本文取得の統計情報を確認
-grep "記事本文取得完了" logs/gemini_fetcher.log | tail -5
-```
-
-## トラブルシューティング
-
-### 記事本文取得の成功率が低い場合
-
-1. **ログで詳細を確認**:
-   ```bash
-   grep "記事本文取得" logs/gemini_fetcher.log | tail -20
-   ```
-
-2. **タイムアウト時間を延長**:
-   `config.json`で調整：
-   ```json
-   {
-     "news_scraping": {
-       "content_fetching": {
-         "timeout_per_article": 15,
-         "parallel_content_workers": 3
-       }
-     }
-   }
-   ```
-
-3. **特定サイトのセレクタを調整**:
-   記事本文が取得できないサイトの`content_selectors`を修正
-
-### エンコーディング文字化けが発生する場合
-
-1. **該当サイトにchardetを有効化**:
-   ```json
-   {
-     "name": "サイト名",
-     "encoding_fix": "chardet"
-   }
-   ```
-
-2. **ログでエンコーディング検出結果を確認**:
-   ```bash
-   grep "エンコーディング" logs/gemini_fetcher.log
-   ```
-
-### cronが実行されない場合
-
-1. **cronが動作しているか確認**:
-   ```bash
-   ps aux | grep cron
-   ```
-
-2. **パスを絶対パスに変更**:
-   - `which python3` でPythonのフルパスを確認
-   - プロジェクトディレクトリも絶対パスで指定
-
-3. **ログファイルを確認**:
-   ```bash
-   cat logs/cron.log
-   cat logs/gemini_fetcher.log
-   ```
-
-### APIエラーが発生する場合
-
-1. **APIキーを確認**:
-   ```bash
-   cat .env
-   ```
-
-2. **APIキーが有効か確認**:
-   - [Google AI Studio](https://makersuite.google.com/app/apikey)で確認
-
-3. **ログでエラー詳細を確認**:
-   ```bash
-   grep ERROR logs/gemini_fetcher.log
-   ```
-
-### 回答が保存されない場合
-
-1. **ディレクトリの権限を確認**:
-   ```bash
-   ls -ld responses logs
-   ```
-
-2. **手動実行でテスト**:
-   ```bash
-   python3 gemini_fetcher.py
-   ```
-
-## カスタマイズ
-
-### 実行時刻の変更
-
-crontabのエントリを編集します：
-
-```bash
-# 毎日21:00に実行
-0 21 * * * cd /Users/queenbee/git/autoLLMGetter && /usr/bin/python3 gemini_fetcher.py >> logs/cron.log 2>&1
-
-# 毎日7:00と19:00に実行（1日2回）
-0 7,19 * * * cd /Users/queenbee/git/autoLLMGetter && /usr/bin/python3 gemini_fetcher.py >> logs/cron.log 2>&1
-```
-
-### パフォーマンスチューニング
-
-より高速に処理したい場合：
-
-```json
-{
-  "news_scraping": {
-    "parallel_workers": 5,  // RSS取得の並列数を増やす（デフォルト: 3）
-    "max_articles_per_site": 20,  // 記事数を減らす（デフォルト: 30）
-    "content_fetching": {
-      "parallel_content_workers": 8,  // 本文取得の並列数を増やす（デフォルト: 5）
-      "timeout_per_article": 5  // タイムアウトを短くする（デフォルト: 10）
-    }
-  }
-}
-```
-
-**注意**: 並列数を増やしすぎると、サイト側でアクセス制限される可能性があります。
-
-### リトライ回数の変更
-
-`config.json`で設定を変更：
-
-```json
-{
-  "max_retries": 5,
-  "retry_delay": 10
-}
-```
-
-### 分析プロンプトのカスタマイズ
-
-`news_analysis_prompt.txt`を編集することで、Geminiへの分析指示を自由にカスタマイズできます：
-
-```
-# news_analysis_prompt.txt を直接編集
-# Pythonの知識なしで分析の観点や形式を変更可能
-```
-
-**重要事項**:
-- `{formatted_articles}` プレースホルダーは必須（記事データの挿入位置）
-- UTF-8エンコーディングで保存してください
-- `config.json`の`news_analysis_prompt_path`で別のファイルを指定することも可能
-
-### モデルの変更
-
-`config.json`で使用するGeminiモデルを変更：
-
-```json
-{
-  "gemini_model": "gemini-2.5-flash"
-}
-```
-
-利用可能なモデル:
-- `gemini-2.5-flash`: 高速・低コスト（推奨）
-- `gemini-pro`: バランス型
-- `gemini-ultra`: 最高品質（利用可能な場合）
-
-## 技術スタック
-
-- **記事本文抽出**: trafilatura (ボイラープレート自動除去)
-- **エンコーディング検出**: chardet (Shift_JIS等の日本語対応)
-- **HTML解析**: BeautifulSoup4 + lxml
-- **RSS解析**: feedparser
-- **AI分析**: Google Gemini API (gemini-2.5-flash)
-- **並列処理**: ThreadPoolExecutor (5並列)
-
-## アーキテクチャ
-
-### 3段階フォールバック戦略
-
-記事本文抽出は以下の順序で試行されます：
-
-1. **trafilatura汎用抽出** (第一選択、85%成功想定)
-   - 広告・ナビゲーション自動除去
-   - 複数の記事抽出アルゴリズムを内部で試行
-
-2. **サイト特化セレクタ** (trafilatura失敗時)
-   - config.jsonで定義されたCSSセレクタを使用
-   - サイトごとに最適化された抽出
-
-3. **BeautifulSoup汎用フォールバック** (最終手段)
-   - 汎用セレクタで記事本文を推測
-   - 最低限の品質保証
-
-### データフロー
-
-```
-RSS取得 (3並列)
-  ↓
-メタデータ抽出
-  ↓
-記事本文取得 (5並列) ← 3段階フォールバック
-  ↓
-フォーマット (記事本文含む)
-  ↓
-Gemini分析
-  ↓
-保存 (articles.txt + 分析レポート.txt)
-```
-
-## 将来の拡張案
-
-- メール/Slack通知機能
-- Web UIでの記事閲覧・検索機能
-- より多くの技術メディアへの対応
-- 記事の重要度スコアリング
-- トレンドキーワードの時系列分析
-
-## ライセンス
-
-このプロジェクトは自由に使用・改変できます。
-
-## 参考リンク
-
-- [Google Gemini API Documentation](https://ai.google.dev/docs)
-- [Google AI Studio](https://makersuite.google.com/)
-- [cron設定ガイド](https://crontab.guru/)

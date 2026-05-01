@@ -2,9 +2,12 @@
   "question": "",
 
   "llm_provider": "bedrock",
-  "bedrock_model": "us.anthropic.claude-sonnet-4-6",
+  "bedrock_model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
   "bedrock_region": "us-east-1",
-  "bedrock_max_tokens": 4096,
+  "bedrock_max_tokens": 16384,
+  "bedrock_read_timeout": 600,
+  "bedrock_connect_timeout": 10,
+  "bedrock_retry_max_attempts": 0,
 
   "max_retries": 3,
   "retry_delay": 5,

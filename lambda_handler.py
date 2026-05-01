@@ -42,7 +42,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         }
 
     # Bedrock はIAMロール認証のためAPIキー不要
-    # Gemini使用時のみGEMINI_API_KEYが必要（LLMFetcher内でチェック）
 
     try:
         # S3Handlerを初期化
@@ -55,7 +54,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # プロバイダーとモデル情報をログ
         provider = config.get('llm_provider', 'bedrock')
-        model_key = 'bedrock_model' if provider == 'bedrock' else 'gemini_model'
+        model_key = 'bedrock_model' if provider == 'bedrock' else 'claude_model'  # 将来の拡張を考慮して動的にキーを選択
         logger.info(f"設定ファイル読み込み完了: プロバイダー={provider}, モデル={config.get(model_key)}")
 
         # news_analysis_prompt.txtをS3から読み込み
@@ -130,12 +129,12 @@ def local_test():
     # モックのLambdaコンテキスト
     class MockContext:
         def __init__(self):
-            self.function_name = "gemini-news-analyzer"
+            self.function_name = "claude-news-analyzer"
             self.function_version = "$LATEST"
-            self.invoked_function_arn = "arn:aws:lambda:ap-northeast-1:123456789012:function:gemini-news-analyzer"
+            self.invoked_function_arn = "arn:aws:lambda:ap-northeast-1:123456789012:function:claude-news-analyzer"
             self.memory_limit_in_mb = 1536
             self.aws_request_id = "test-request-id"
-            self.log_group_name = "/aws/lambda/gemini-news-analyzer"
+            self.log_group_name = "/aws/lambda/claude-news-analyzer"
             self.log_stream_name = "test-log-stream"
 
     # Lambda関数を実行
@@ -147,7 +146,7 @@ def local_test():
 if __name__ == "__main__":
     # ローカル環境でのテスト実行
     print("ローカル環境でLambda関数をテスト実行します")
-    print("注意: S3_BUCKET_NAME と GEMINI_API_KEY 環境変数が必要です")
+    print("注意: S3_BUCKET_NAME 環境変数が必要です")
     print("注意: AWS認証情報（~/.aws/credentials）が正しく設定されている必要があります")
     print()
     local_test()
