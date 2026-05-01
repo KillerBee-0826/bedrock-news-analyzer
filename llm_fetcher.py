@@ -356,11 +356,12 @@ class LLMFetcher:
         return datetime.now(tz)
 
     def _get_previous_week_range(self) -> tuple:
-        """直前の月曜から日曜までの日付範囲を取得する"""
+        """直前の日曜から土曜までの記事日付範囲を取得する"""
         today = self._get_now().date()
-        current_week_monday = today - timedelta(days=today.weekday())
-        period_start = current_week_monday - timedelta(days=7)
-        period_end = current_week_monday - timedelta(days=1)
+        days_since_sunday = (today.weekday() + 1) % 7
+        current_week_sunday = today - timedelta(days=days_since_sunday)
+        period_start = current_week_sunday - timedelta(days=7)
+        period_end = current_week_sunday - timedelta(days=1)
         return period_start, period_end
 
     def _get_previous_month_range(self) -> tuple:
@@ -384,21 +385,23 @@ class LLMFetcher:
             raise
 
     def _load_daily_analysis(self, target_date) -> Optional[str]:
-        """日次分析をS3から読み込む。移行期間は旧responses/も参照する"""
-        date_str = target_date.strftime("%Y-%m-%d")
+        """記事日付に対応する日次分析をS3から読み込む。移行期間は旧responses/も参照する"""
+        article_date_str = target_date.strftime("%Y-%m-%d")
+        daily_file_date = target_date + timedelta(days=1)
+        daily_file_date_str = daily_file_date.strftime("%Y-%m-%d")
         daily_prefix = self._get_output_prefix("daily")
         candidate_keys = [
-            f"{daily_prefix}/{date_str}.txt",
-            f"responses/{date_str}.txt"
+            f"{daily_prefix}/{daily_file_date_str}.txt",
+            f"responses/{daily_file_date_str}.txt"
         ]
 
         for key in candidate_keys:
             content = self._load_text_if_exists(key)
             if content:
-                self.logger.info(f"日次分析を読み込みました: {key}")
-                return f"## {date_str}\n\n{content}"
+                self.logger.info(f"日次分析を読み込みました: article_date={article_date_str}, key={key}")
+                return f"## {article_date_str}\n\n{content}"
 
-        self.logger.warning(f"日次分析が見つかりません: {date_str}")
+        self.logger.warning(f"日次分析が見つかりません: article_date={article_date_str}, file_date={daily_file_date_str}")
         return None
 
     def _load_weekly_analyses_for_month(self, month_start, month_end) -> str:

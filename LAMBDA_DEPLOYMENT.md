@@ -181,6 +181,22 @@ export AWS_REGION="ap-northeast-1"
 ./deploy/deploy.sh
 ```
 
+再デプロイ時も Lambda 関数を削除する必要はありません。`deploy/deploy.sh` は既存の `claude-news-analyzer` がある場合、`update-function-code` と `update-function-configuration` で更新します。
+
+`CreateFunction` で `Function already exist` が出る場合は、既存確認が正しく通っていない可能性があります。削除する前に以下を確認してください。
+
+```bash
+# 実行中のAWSアカウントを確認
+aws sts get-caller-identity
+
+# 対象リージョンに関数が存在するか確認
+aws lambda get-function \
+  --function-name claude-news-analyzer \
+  --region ap-northeast-1
+```
+
+`get-function` が権限不足や認証エラーで失敗している場合、関数が存在していても新規作成扱いに見えることがあります。その場合は `lambda:GetFunction`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration` 権限と `AWS_REGION` を確認してください。
+
 ### ステップ6: Lambda環境変数を確認・更新
 
 `deploy/deploy.sh` は `S3_BUCKET_NAME` と `TZ=Asia/Tokyo` を設定します。必要に応じて明示的に再設定します。
@@ -293,10 +309,10 @@ aws lambda add-permission \
   --source-arn arn:aws:events:ap-northeast-1:235217802903:rule/claude-news-analyzer-daily \
   --region ap-northeast-1
 
-# 週次: 毎週月曜1:00 UTC（= 月曜10:00 JST）
+# 週次: 毎週日曜1:00 UTC（= 日曜10:00 JST）
 aws events put-rule \
   --name claude-news-analyzer-weekly \
-  --schedule-expression 'cron(0 1 ? * MON *)' \
+  --schedule-expression 'cron(0 1 ? * SUN *)' \
   --state ENABLED \
   --region ap-northeast-1
 
@@ -408,7 +424,7 @@ aws s3 ls s3://claude-news-analyzer/weekly/
 aws s3 ls s3://claude-news-analyzer/monthly/
 ```
 
-週次分析は、直前の月曜から日曜までの日次分析を `daily/` から読み込みます。移行期間の互換用として、`responses/YYYY-MM-DD.txt` も読み取り対象になります。
+週次分析は、前週の日曜から土曜までの記事分析を対象にします。日次ファイルは実行日ベースのため、対象記事日付の翌日ファイルを `daily/` から読み込みます。移行期間の互換用として、`responses/YYYY-MM-DD.txt` も読み取り対象になります。
 
 月次分析は、前月内に終了日を持つ週次分析を `weekly/` から読み込みます。
 
@@ -459,7 +475,7 @@ aws iam put-role-policy \
 
 ### エラー: 週次分析の入力となる日次分析が見つからない
 
-**原因**: 前月曜から日曜までの日次分析が `daily/` または旧 `responses/` に存在しない。
+**原因**: 前週日曜から土曜までの記事分析に対応する日次ファイルが `daily/` または旧 `responses/` に存在しない。
 
 **確認コマンド**:
 
@@ -481,6 +497,28 @@ aws s3 ls s3://claude-news-analyzer/weekly/
 ```
 
 月次分析の対象になる週次ファイル名は `weekly/YYYY-MM-DD_YYYY-MM-DD.txt` です。後半の日付が前月内にあるものが月次分析に使われます。
+
+### エラー: CreateFunctionでFunction already existになる
+
+**原因**: 既存 Lambda 関数がある状態で新規作成処理に進んでいる。
+
+**解決策**:
+
+```bash
+# アカウントとリージョンを確認
+aws sts get-caller-identity
+aws lambda get-function \
+  --function-name claude-news-analyzer \
+  --region ap-northeast-1
+
+# 通常は削除せず、デプロイスクリプトで更新する
+export LAMBDA_ROLE_ARN="arn:aws:iam::235217802903:role/lambda-claude-news-analyzer"
+export S3_BUCKET_NAME="claude-news-analyzer"
+export AWS_REGION="ap-northeast-1"
+./deploy/deploy.sh
+```
+
+Lambda 関数を削除して再作成するのは通常手順ではありません。削除すると EventBridge 権限やトリガー設定を再確認する必要があります。
 
 ### エラー: Lambda Layerが大きすぎる
 

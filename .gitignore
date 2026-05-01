@@ -30,7 +30,7 @@ Thumbs.db
 lambda-function.zip
 lambda-layer.zip
 layer/
-output.json
+output*.json
 
 # User-generated data
 responses/

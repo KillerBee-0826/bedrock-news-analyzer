@@ -80,7 +80,8 @@ echo ""
 echo "=== Lambda関数デプロイ ==="
 
 # Lambda関数が存在するか確認
-if aws lambda get-function --function-name ${FUNCTION_NAME} --region ${REGION} 2>/dev/null; then
+GET_FUNCTION_ERROR=$(mktemp)
+if aws lambda get-function --function-name ${FUNCTION_NAME} --region ${REGION} --no-cli-pager > /dev/null 2>"${GET_FUNCTION_ERROR}"; then
     echo "Lambda関数が既に存在します。更新します..."
 
     # コードを更新
@@ -91,6 +92,11 @@ if aws lambda get-function --function-name ${FUNCTION_NAME} --region ${REGION} 2
       --no-cli-pager > /dev/null
 
     echo "✓ Lambda関数コード更新完了"
+
+    echo "Lambda関数コード更新の完了待機中..."
+    aws lambda wait function-updated \
+      --function-name ${FUNCTION_NAME} \
+      --region ${REGION}
 
     # 設定を更新
     aws lambda update-function-configuration \
@@ -106,8 +112,26 @@ if aws lambda get-function --function-name ${FUNCTION_NAME} --region ${REGION} 2
 
     echo "✓ Lambda関数設定更新完了"
 
+    echo "Lambda関数設定更新の完了待機中..."
+    aws lambda wait function-updated \
+      --function-name ${FUNCTION_NAME} \
+      --region ${REGION}
+
 else
-    echo "Lambda関数を新規作成します..."
+    if grep -q "ResourceNotFoundException" "${GET_FUNCTION_ERROR}"; then
+        echo "Lambda関数が存在しません。新規作成します..."
+    else
+        echo "❌ Lambda関数の存在確認に失敗しました"
+        echo ""
+        cat "${GET_FUNCTION_ERROR}"
+        echo ""
+        echo "AWSアカウント、リージョン、認証情報、lambda:GetFunction 権限を確認してください。"
+        echo "確認コマンド:"
+        echo "  aws sts get-caller-identity"
+        echo "  aws lambda get-function --function-name ${FUNCTION_NAME} --region ${REGION}"
+        rm -f "${GET_FUNCTION_ERROR}"
+        exit 1
+    fi
 
     # IAMロールARNのチェック
     if [ -z "$ROLE_ARN" ]; then
@@ -136,6 +160,8 @@ else
 
     echo "✓ Lambda関数作成完了"
 fi
+
+rm -f "${GET_FUNCTION_ERROR}"
 
 echo ""
 echo "=== デプロイ完了 ==="
@@ -172,4 +198,5 @@ echo "       --rule claude-news-analyzer-daily \\"
 echo "       --targets file:///tmp/claude-news-analyzer-daily-target.json \\"
 echo "       --region ${REGION}"
 echo ""
-echo "     週次・月次は同じLambdaに analysis_type=weekly/monthly を渡す別ルールを作成してください。"
+echo "     週次は毎週日曜の日次分析完了後に analysis_type=weekly を渡す別ルールを作成してください。"
+echo "     月次は毎月1日に analysis_type=monthly を渡す別ルールを作成してください。"

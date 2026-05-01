@@ -127,6 +127,7 @@ Lambda関数に以下の権限を持つIAMロールが必要です。
     ./deploy/deploy.sh
     ```
     これにより、`requirements-lambda.txt` に基づくLambda Layerが構築・公開され、関数コードがパッケージ化されてデプロイされます。
+    既存の Lambda 関数がある場合は削除せず、コードと設定が更新されます。
 
 ### 5. 定期実行の設定 (EventBridge)
 
@@ -163,7 +164,7 @@ aws events put-targets \
     ```bash
 aws events put-rule \
   --name claude-news-analyzer-weekly \
-  --schedule-expression 'cron(0 1 ? * MON *)' \
+  --schedule-expression 'cron(0 1 ? * SUN *)' \
   --region ${AWS_REGION}
 
 cat > /tmp/claude-news-analyzer-weekly-target.json <<EOF
