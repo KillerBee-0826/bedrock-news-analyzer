@@ -14,6 +14,14 @@ from cloudwatch_logger import setup_cloudwatch_logger
 from llm_fetcher import LLMFetcher
 
 
+def _get_analysis_type(event: Dict[str, Any]) -> str:
+    """EventBridge入力から分析種別を取得する"""
+    analysis_type = event.get("analysis_type")
+    if analysis_type is None and isinstance(event.get("detail"), dict):
+        analysis_type = event["detail"].get("analysis_type")
+    return analysis_type or "daily"
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda関数のメインハンドラー
@@ -57,9 +65,22 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         model_key = 'bedrock_model' if provider == 'bedrock' else 'claude_model'  # 将来の拡張を考慮して動的にキーを選択
         logger.info(f"設定ファイル読み込み完了: プロバイダー={provider}, モデル={config.get(model_key)}")
 
-        # news_analysis_prompt.txtをS3から読み込み
-        logger.info("プロンプトテンプレートをS3から読み込み")
-        prompt_template = s3_handler.load_text('config/news_analysis_prompt.txt')
+        analysis_type = _get_analysis_type(event)
+        if analysis_type not in {"daily", "weekly", "monthly"}:
+            error_msg = f"未サポートの分析種別です: {analysis_type}"
+            logger.error(error_msg)
+            return {
+                'statusCode': 400,
+                'body': json.dumps({'success': False, 'error': error_msg}, ensure_ascii=False)
+            }
+
+        prompt_paths = config.get("prompt_paths", {})
+        default_prompt_path = config.get("news_analysis_prompt_path", "config/news_analysis_prompt.txt")
+        prompt_path = prompt_paths.get(analysis_type, default_prompt_path)
+
+        # 分析種別に応じたプロンプトをS3から読み込み
+        logger.info(f"プロンプトテンプレートをS3から読み込み: analysis_type={analysis_type}, path={prompt_path}")
+        prompt_template = s3_handler.load_text(prompt_path)
         logger.info(f"プロンプトテンプレート読み込み完了: {len(prompt_template)} 文字")
 
         # LLMFetcherを初期化
@@ -72,8 +93,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
         # ニュース収集・分析を実行
-        logger.info("ニュース収集・分析を開始")
-        success = fetcher.run()
+        logger.info(f"ニュース分析を開始: analysis_type={analysis_type}")
+        success = fetcher.run(analysis_type=analysis_type)
 
         logger.info("=" * 80)
         if success:
@@ -82,7 +103,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'statusCode': 200,
                 'body': json.dumps({
                     'success': True,
-                    'message': 'ニュース分析が正常に完了しました'
+                    'message': f'{analysis_type} ニュース分析が正常に完了しました'
                 }, ensure_ascii=False)
             }
         else:
@@ -123,7 +144,8 @@ def local_test():
         "source": "aws.events",
         "time": "2026-04-26T00:00:00Z",
         "region": "ap-northeast-1",
-        "resources": []
+        "resources": [],
+        "analysis_type": "daily"
     }
 
     # モックのLambdaコンテキスト

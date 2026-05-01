@@ -105,11 +105,13 @@ Lambda関数に以下の権限を持つIAMロールが必要です。
     ```bash
     aws s3 mb s3://<your-bucket-name> --region <your-region>
     ```
-2.  `config/config.json` と `config/news_analysis_prompt.txt` を編集します。
+2.  `config/config.json` と各プロンプトファイルを編集します。
 3.  編集したファイルをS3バケットの `config/` プレフィックスにアップロードします。
     ```bash
     aws s3 cp config/config.json s3://<your-bucket-name>/config/config.json
     aws s3 cp config/news_analysis_prompt.txt s3://<your-bucket-name>/config/news_analysis_prompt.txt
+    aws s3 cp config/weekly_news_analysis_prompt.txt s3://<your-bucket-name>/config/weekly_news_analysis_prompt.txt
+    aws s3 cp config/monthly_news_analysis_prompt.txt s3://<your-bucket-name>/config/monthly_news_analysis_prompt.txt
     ```
 
 ### 4. デプロイスクリプトの実行
@@ -130,7 +132,7 @@ Lambda関数に以下の権限を持つIAMロールが必要です。
 
 デプロイ成功後、表示されるAWS CLIコマンドを参考にEventBridgeルールを作成し、Lambda関数をターゲットとして設定します。
 
-1.  **ルールを作成** (毎日 00:00 UTC / 09:00 JST に実行):
+1.  **ルールを作成** (毎日 00:00 UTC / 09:00 JST に日次分析を実行):
     ```bash
     aws events put-rule \
       --name claude-news-analyzer-daily \
@@ -139,13 +141,65 @@ Lambda関数に以下の権限を持つIAMロールが必要です。
     ```
 2.  **ターゲットを設定**:
     ```bash
-    # YOUR_ACCOUNT_IDとFUNCTION_NAMEを実際の値に置き換えてください
-    FUNCTION_ARN="arn:aws:lambda:${AWS_REGION}:YOUR_ACCOUNT_ID:function:claude-news-analyzer"
+# YOUR_ACCOUNT_IDとFUNCTION_NAMEを実際の値に置き換えてください
+FUNCTION_ARN="arn:aws:lambda:${AWS_REGION}:YOUR_ACCOUNT_ID:function:claude-news-analyzer"
 
-    aws events put-targets \
-      --rule claude-news-analyzer-daily \
-      --targets "Id=1,Arn=${FUNCTION_ARN}" \
-      --region ${AWS_REGION}
+cat > /tmp/claude-news-analyzer-daily-target.json <<EOF
+[
+  {
+    "Id": "1",
+    "Arn": "${FUNCTION_ARN}",
+    "Input": "{\"analysis_type\":\"daily\"}"
+  }
+]
+EOF
+
+aws events put-targets \
+  --rule claude-news-analyzer-daily \
+  --targets file:///tmp/claude-news-analyzer-daily-target.json \
+  --region ${AWS_REGION}
+    ```
+    週次・月次は同じLambdaに別ルールで `analysis_type` を渡します。
+    ```bash
+aws events put-rule \
+  --name claude-news-analyzer-weekly \
+  --schedule-expression 'cron(0 1 ? * MON *)' \
+  --region ${AWS_REGION}
+
+cat > /tmp/claude-news-analyzer-weekly-target.json <<EOF
+[
+  {
+    "Id": "1",
+    "Arn": "${FUNCTION_ARN}",
+    "Input": "{\"analysis_type\":\"weekly\"}"
+  }
+]
+EOF
+
+aws events put-targets \
+  --rule claude-news-analyzer-weekly \
+  --targets file:///tmp/claude-news-analyzer-weekly-target.json \
+  --region ${AWS_REGION}
+
+aws events put-rule \
+  --name claude-news-analyzer-monthly \
+  --schedule-expression 'cron(0 2 1 * ? *)' \
+  --region ${AWS_REGION}
+
+cat > /tmp/claude-news-analyzer-monthly-target.json <<EOF
+[
+  {
+    "Id": "1",
+    "Arn": "${FUNCTION_ARN}",
+    "Input": "{\"analysis_type\":\"monthly\"}"
+  }
+]
+EOF
+
+aws events put-targets \
+  --rule claude-news-analyzer-monthly \
+  --targets file:///tmp/claude-news-analyzer-monthly-target.json \
+  --region ${AWS_REGION}
     ```
 3.  **Lambdaにトリガー権限を追加**:
     ```bash

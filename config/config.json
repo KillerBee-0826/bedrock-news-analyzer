@@ -14,6 +14,16 @@
   "responses_dir": "responses",
   "logs_dir": "logs",
   "news_analysis_prompt_path": "config/news_analysis_prompt.txt",
+  "prompt_paths": {
+    "daily": "config/news_analysis_prompt.txt",
+    "weekly": "config/weekly_news_analysis_prompt.txt",
+    "monthly": "config/monthly_news_analysis_prompt.txt"
+  },
+  "output_prefixes": {
+    "daily": "daily",
+    "weekly": "weekly",
+    "monthly": "monthly"
+  },
 
   "news_scraping": {
     "enabled": true,

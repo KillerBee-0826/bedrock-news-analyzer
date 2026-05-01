@@ -152,15 +152,26 @@ class S3Handler:
         """
         try:
             self.logger.info(f"S3オブジェクト一覧を取得: s3://{self.bucket_name}/{prefix}")
-            response = self.s3_client.list_objects_v2(
-                Bucket=self.bucket_name,
-                Prefix=prefix
-            )
+            keys = []
+            continuation_token = None
 
-            if 'Contents' not in response:
-                return []
+            while True:
+                params = {
+                    "Bucket": self.bucket_name,
+                    "Prefix": prefix
+                }
+                if continuation_token:
+                    params["ContinuationToken"] = continuation_token
 
-            return [obj['Key'] for obj in response['Contents']]
+                response = self.s3_client.list_objects_v2(**params)
+                keys.extend(obj['Key'] for obj in response.get('Contents', []))
+
+                if not response.get('IsTruncated'):
+                    break
+
+                continuation_token = response.get('NextContinuationToken')
+
+            return keys
         except ClientError as e:
             self.logger.error(f"S3アクセスエラー: {e}")
             raise

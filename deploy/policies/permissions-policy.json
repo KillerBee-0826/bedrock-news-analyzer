@@ -12,10 +12,14 @@
       "Effect": "Allow",
       "Action": [
         "s3:GetObject",
-        "s3:PutObject",
-        "s3:HeadObject"
+        "s3:PutObject"
       ],
-      "Resource": "arn:aws:s3:::claude-news-analyzer/responses/*"
+      "Resource": [
+        "arn:aws:s3:::claude-news-analyzer/responses/*",
+        "arn:aws:s3:::claude-news-analyzer/daily/*",
+        "arn:aws:s3:::claude-news-analyzer/weekly/*",
+        "arn:aws:s3:::claude-news-analyzer/monthly/*"
+      ]
     },
     {
       "Effect": "Allow",

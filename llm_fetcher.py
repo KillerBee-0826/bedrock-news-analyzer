@@ -9,13 +9,15 @@ import sys
 import json
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 try:
     import boto3
+    import pytz
     from bedrock_client import BedrockClient
+    from botocore.exceptions import ClientError
 except ImportError as e:
     print(f"必要なパッケージがインストールされていません: {e}")
     print("Lambda環境ではboto3が組み込まれています")
@@ -315,20 +317,21 @@ class LLMFetcher:
         Returns:
             保存先パス（S3キーまたはファイルパス）
         """
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = self._get_now().strftime("%Y-%m-%d")
 
         try:
             # Lambda環境（S3Handler使用）
             if self.s3_handler is not None:
-                s3_key = f"responses/{date_str}_articles.txt"
+                prefix = self._get_output_prefix("daily")
+                s3_key = f"{prefix}/{date_str}_articles.txt"
                 self.s3_handler.save_text(s3_key, formatted_articles)
                 self.logger.info(f"記事一覧をS3に保存しました: s3://{self.s3_handler.bucket_name}/{s3_key}")
                 return s3_key
 
             # ローカル環境（ファイルシステム使用）
             else:
-                responses_dir = Path(self.config["responses_dir"])
-                responses_dir.mkdir(exist_ok=True)
+                responses_dir = Path(self.config["responses_dir"]) / self._get_output_prefix("daily")
+                responses_dir.mkdir(parents=True, exist_ok=True)
                 output_file = responses_dir / f"{date_str}_articles.txt"
 
                 with open(output_file, "w", encoding="utf-8") as f:
@@ -340,6 +343,102 @@ class LLMFetcher:
         except Exception as e:
             self.logger.error(f"記事一覧の保存に失敗しました: {str(e)}")
             raise
+
+    def _get_output_prefix(self, analysis_type: str) -> str:
+        """分析種別に対応するS3/ローカル出力プレフィックスを取得する"""
+        prefixes = self.config.get("output_prefixes", {})
+        return prefixes.get(analysis_type, analysis_type)
+
+    def _get_now(self) -> datetime:
+        """設定されたタイムゾーンの現在時刻を取得する"""
+        timezone_name = self.config.get("news_scraping", {}).get("timezone", "Asia/Tokyo")
+        tz = pytz.timezone(timezone_name)
+        return datetime.now(tz)
+
+    def _get_previous_week_range(self) -> tuple:
+        """直前の月曜から日曜までの日付範囲を取得する"""
+        today = self._get_now().date()
+        current_week_monday = today - timedelta(days=today.weekday())
+        period_start = current_week_monday - timedelta(days=7)
+        period_end = current_week_monday - timedelta(days=1)
+        return period_start, period_end
+
+    def _get_previous_month_range(self) -> tuple:
+        """前月の開始日と終了日を取得する"""
+        today = self._get_now().date()
+        current_month_start = today.replace(day=1)
+        previous_month_end = current_month_start - timedelta(days=1)
+        previous_month_start = previous_month_end.replace(day=1)
+        return previous_month_start, previous_month_end
+
+    def _load_text_if_exists(self, key: str) -> Optional[str]:
+        """存在するS3テキストを読み込む。存在しなければNoneを返す"""
+        try:
+            if self.s3_handler and self.s3_handler.object_exists(key):
+                return self.s3_handler.load_text(key)
+            return None
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code')
+            if error_code in ('404', 'NoSuchKey'):
+                return None
+            raise
+
+    def _load_daily_analysis(self, target_date) -> Optional[str]:
+        """日次分析をS3から読み込む。移行期間は旧responses/も参照する"""
+        date_str = target_date.strftime("%Y-%m-%d")
+        daily_prefix = self._get_output_prefix("daily")
+        candidate_keys = [
+            f"{daily_prefix}/{date_str}.txt",
+            f"responses/{date_str}.txt"
+        ]
+
+        for key in candidate_keys:
+            content = self._load_text_if_exists(key)
+            if content:
+                self.logger.info(f"日次分析を読み込みました: {key}")
+                return f"## {date_str}\n\n{content}"
+
+        self.logger.warning(f"日次分析が見つかりません: {date_str}")
+        return None
+
+    def _load_weekly_analyses_for_month(self, month_start, month_end) -> str:
+        """前月内に終了した週次分析をS3から読み込む"""
+        if self.s3_handler is None:
+            raise ValueError("月次分析にはS3Handlerが必要です")
+
+        weekly_prefix = self._get_output_prefix("weekly")
+        keys = self.s3_handler.list_objects(f"{weekly_prefix}/")
+        target_keys = []
+
+        for key in keys:
+            filename = Path(key).name
+            if not filename.endswith(".txt"):
+                continue
+
+            try:
+                period_part = filename.removesuffix(".txt")
+                _, end_date_str = period_part.split("_", 1)
+                period_end = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                self.logger.warning(f"週次分析ファイル名を解析できません: {key}")
+                continue
+
+            if month_start <= period_end <= month_end:
+                target_keys.append(key)
+
+        target_keys.sort()
+        if not target_keys:
+            raise ValueError(
+                f"月次分析の入力となる週次分析が見つかりません: {month_start.strftime('%Y-%m')}"
+            )
+
+        reports = []
+        for key in target_keys:
+            content = self.s3_handler.load_text(key)
+            reports.append(f"## {Path(key).stem}\n\n{content}")
+
+        self.logger.info(f"月次分析の入力週次レポート数: {len(reports)}")
+        return ("\n\n" + "=" * 80 + "\n\n").join(reports)
 
     def _create_news_analysis_prompt(self, formatted_articles: str) -> str:
         """
@@ -359,6 +458,22 @@ class LLMFetcher:
             print("エラー: プロンプトテンプレートの形式が不正です")
             sys.exit(1)
 
+    def _create_periodic_analysis_prompt(self, **kwargs) -> str:
+        """
+        週次・月次分析用のプロンプトを生成
+
+        Args:
+            kwargs: テンプレートに埋め込む変数
+
+        Returns:
+            分析プロンプト
+        """
+        try:
+            return self.prompt_template.format(**kwargs)
+        except KeyError as e:
+            self.logger.error(f"プロンプトテンプレートの変数置換エラー: {e}")
+            raise ValueError(f"プロンプトテンプレートに必要なプレースホルダーがありません: {e}")
+
     def save_response(self, response: str, date_str: Optional[str] = None, section: str = "question") -> str:
         """
         回答を保存（S3またはローカルファイル）
@@ -372,19 +487,19 @@ class LLMFetcher:
             保存先パス（S3キーまたはファイルパス）
         """
         if date_str is None:
-            date_str = datetime.now().strftime("%Y-%m-%d")
+            date_str = self._get_now().strftime("%Y-%m-%d")
 
         # レスポンス本文を構築
         content_lines = []
         if section == "news_analysis":
             content_lines.append(f"# ニュース分析レポート")
-            content_lines.append(f"日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            content_lines.append(f"日時: {self._get_now().strftime('%Y-%m-%d %H:%M:%S')}")
             content_lines.append("-" * 80)
             content_lines.append("")
             content_lines.append(response)
         else:
             content_lines.append(f"質問: {self.config.get('question', '')}")
-            content_lines.append(f"日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            content_lines.append(f"日時: {self._get_now().strftime('%Y-%m-%d %H:%M:%S')}")
             content_lines.append("-" * 80)
             content_lines.append("")
             content_lines.append(response)
@@ -394,7 +509,8 @@ class LLMFetcher:
         try:
             # Lambda環境（S3Handler使用）
             if self.s3_handler is not None:
-                s3_key = f"responses/{date_str}.txt"
+                prefix = self._get_output_prefix("daily")
+                s3_key = f"{prefix}/{date_str}.txt"
 
                 # S3では追記が難しいため、既存ファイルを読み込んで結合
                 if self.s3_handler.object_exists(s3_key):
@@ -407,8 +523,8 @@ class LLMFetcher:
 
             # ローカル環境（ファイルシステム使用）
             else:
-                responses_dir = Path(self.config["responses_dir"])
-                responses_dir.mkdir(exist_ok=True)
+                responses_dir = Path(self.config["responses_dir"]) / self._get_output_prefix("daily")
+                responses_dir.mkdir(parents=True, exist_ok=True)
                 output_file = responses_dir / f"{date_str}.txt"
 
                 # 既存ファイルがあれば追記モード、なければ新規作成
@@ -426,31 +542,139 @@ class LLMFetcher:
             self.logger.error(f"保存に失敗しました: {str(e)}")
             raise
 
-    def run(self) -> bool:
+    def save_periodic_response(
+        self,
+        response: str,
+        analysis_type: str,
+        output_name: str,
+        title: str
+    ) -> str:
+        """
+        週次・月次分析結果を保存する
+        """
+        content_lines = [
+            f"# {title}",
+            f"日時: {self._get_now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "-" * 80,
+            "",
+            response
+        ]
+        content = "\n".join(content_lines)
+        prefix = self._get_output_prefix(analysis_type)
+
+        if self.s3_handler is not None:
+            s3_key = f"{prefix}/{output_name}.txt"
+            self.s3_handler.save_text(s3_key, content)
+            self.logger.info(f"{title}をS3に保存しました: s3://{self.s3_handler.bucket_name}/{s3_key}")
+            return s3_key
+
+        responses_dir = Path(self.config["responses_dir"]) / prefix
+        responses_dir.mkdir(parents=True, exist_ok=True)
+        output_file = responses_dir / f"{output_name}.txt"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.logger.info(f"{title}をファイルに保存しました: {output_file}")
+        return str(output_file)
+
+    def run_daily(self) -> bool:
+        """
+        日次ニュース分析を実行
+        """
+        if self.config.get('news_scraping', {}).get('enabled', False):
+            self.logger.info("日次ニュース分析を開始")
+            news_response = self._analyze_news()
+            self.save_response(news_response, section="news_analysis")
+        else:
+            self.logger.warning("ニュース分析が無効化されています（config.news_scraping.enabled = false）")
+
+        # 既存の質問処理（オプション）
+        question = self.config.get("question", "")
+        if question and question != "ここに毎日Claudeに投げたい質問を入力してください" and question.strip():
+            self.logger.info(f"追加質問を処理: {question[:50]}...")
+            response = self.fetch_response(question)
+            self.save_response(response, section="question")
+
+        return True
+
+    def run_weekly(self) -> bool:
+        """
+        週次ニュース分析を実行
+        """
+        if self.s3_handler is None:
+            raise ValueError("週次分析にはS3Handlerが必要です")
+
+        period_start, period_end = self._get_previous_week_range()
+        self.logger.info(f"週次分析対象期間: {period_start} - {period_end}")
+
+        reports = []
+        current_date = period_start
+        while current_date <= period_end:
+            daily_report = self._load_daily_analysis(current_date)
+            if daily_report:
+                reports.append(daily_report)
+            current_date += timedelta(days=1)
+
+        if not reports:
+            raise ValueError(f"週次分析の入力となる日次分析が見つかりません: {period_start} - {period_end}")
+
+        if len(reports) < 7:
+            self.logger.warning(f"週次分析の入力日次レポートが不足しています: {len(reports)}/7")
+
+        daily_analyses = ("\n\n" + "=" * 80 + "\n\n").join(reports)
+        prompt = self._create_periodic_analysis_prompt(
+            daily_analyses=daily_analyses,
+            period_start=period_start.strftime("%Y-%m-%d"),
+            period_end=period_end.strftime("%Y-%m-%d")
+        )
+        response = self.fetch_response(prompt)
+        output_name = f"{period_start.strftime('%Y-%m-%d')}_{period_end.strftime('%Y-%m-%d')}"
+        self.save_periodic_response(response, "weekly", output_name, "週次ニュース分析レポート")
+        return True
+
+    def run_monthly(self) -> bool:
+        """
+        月次ニュース分析を実行
+        """
+        if self.s3_handler is None:
+            raise ValueError("月次分析にはS3Handlerが必要です")
+
+        month_start, month_end = self._get_previous_month_range()
+        target_month = month_start.strftime("%Y-%m")
+        self.logger.info(f"月次分析対象月: {target_month}")
+
+        weekly_analyses = self._load_weekly_analyses_for_month(month_start, month_end)
+        prompt = self._create_periodic_analysis_prompt(
+            weekly_analyses=weekly_analyses,
+            target_month=target_month,
+            period_start=month_start.strftime("%Y-%m-%d"),
+            period_end=month_end.strftime("%Y-%m-%d")
+        )
+        response = self.fetch_response(prompt)
+        self.save_periodic_response(response, "monthly", target_month, "月次ニュース分析レポート")
+        return True
+
+    def run(self, analysis_type: str = "daily") -> bool:
         """
         メイン処理を実行
+
+        Args:
+            analysis_type: 分析種別（daily, weekly, monthly）
 
         Returns:
             成功時True、失敗時False
         """
         try:
             self.logger.info("=" * 80)
-            self.logger.info("News Analyzer (Bedrock Claude) - 処理を開始します")
+            self.logger.info(f"News Analyzer (Bedrock Claude) - 処理を開始します: {analysis_type}")
 
-            # ニュース分析処理
-            if self.config.get('news_scraping', {}).get('enabled', False):
-                self.logger.info("ニュース分析を開始")
-                news_response = self._analyze_news()
-                self.save_response(news_response, section="news_analysis")
+            if analysis_type == "daily":
+                self.run_daily()
+            elif analysis_type == "weekly":
+                self.run_weekly()
+            elif analysis_type == "monthly":
+                self.run_monthly()
             else:
-                self.logger.warning("ニュース分析が無効化されています（config.news_scraping.enabled = false）")
-
-            # 既存の質問処理（オプション）
-            question = self.config.get("question", "")
-            if question and question != "ここに毎日Claudeに投げたい質問を入力してください" and question.strip():
-                self.logger.info(f"追加質問を処理: {question[:50]}...")
-                response = self.fetch_response(question)
-                self.save_response(response, section="question")
+                raise ValueError(f"未サポートの分析種別です: {analysis_type}")
 
             self.logger.info("処理が正常に完了しました")
             self.logger.info("=" * 80)
