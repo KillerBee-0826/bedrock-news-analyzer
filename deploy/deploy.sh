@@ -71,6 +71,7 @@ zip -r lambda-function.zip \
   llm_fetcher.py \
   bedrock_client.py \
   news_scraper.py \
+  email_notifier.py \
   -q
 
 function_size=$(du -h lambda-function.zip | cut -f1)

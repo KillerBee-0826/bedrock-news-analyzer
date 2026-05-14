@@ -129,7 +129,7 @@ else
     echo ""
     echo "     # S3からLambda Layerを公開"
     echo "     aws lambda publish-layer-version \\"
-    echo "       --layer-name gclaude-news-analyzer-dependencies \\"
+    echo "       --layer-name claude-news-analyzer-dependencies \\"
     echo "       --content S3Bucket=claude-news-analyzer,S3Key=layers/lambda-layer.zip \\"
     echo "       --compatible-runtimes python3.11 \\"
     echo "       --region ap-northeast-1"

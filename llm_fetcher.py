@@ -11,7 +11,7 @@ import time
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 try:
     import boto3
@@ -280,12 +280,12 @@ class LLMFetcher:
                     )
                     raise
 
-    def _analyze_news(self) -> str:
+    def _analyze_news(self) -> tuple[str, str]:
         """
         ニュース分析を実行
 
         Returns:
-            LLM (Bedrock) による分析結果
+            LLM (Bedrock) による分析結果と保存した記事一覧のS3キー/ファイルパス
         """
         from news_scraper import NewsScraper
 
@@ -299,13 +299,13 @@ class LLMFetcher:
         formatted = scraper.format_articles_for_llm(articles_by_site)
 
         # フォーマットされた記事をファイルに保存
-        self._save_formatted_articles(formatted)
+        articles_key = self._save_formatted_articles(formatted)
 
         # 分析プロンプトを生成
         prompt = self._create_news_analysis_prompt(formatted)
 
         # LLMで分析
-        return self.fetch_response(prompt)
+        return self.fetch_response(prompt), articles_key
 
     def _save_formatted_articles(self, formatted_articles: str) -> str:
         """
@@ -579,14 +579,21 @@ class LLMFetcher:
         self.logger.info(f"{title}をファイルに保存しました: {output_file}")
         return str(output_file)
 
-    def run_daily(self) -> bool:
+    def run_daily(self) -> Dict[str, List[str]]:
         """
         日次ニュース分析を実行
         """
+        artifacts = {
+            "articles": [],
+            "analysis": []
+        }
+
         if self.config.get('news_scraping', {}).get('enabled', False):
             self.logger.info("日次ニュース分析を開始")
-            news_response = self._analyze_news()
-            self.save_response(news_response, section="news_analysis")
+            news_response, articles_key = self._analyze_news()
+            analysis_key = self.save_response(news_response, section="news_analysis")
+            artifacts["articles"].append(articles_key)
+            artifacts["analysis"].append(analysis_key)
         else:
             self.logger.warning("ニュース分析が無効化されています（config.news_scraping.enabled = false）")
 
@@ -597,9 +604,9 @@ class LLMFetcher:
             response = self.fetch_response(question)
             self.save_response(response, section="question")
 
-        return True
+        return artifacts
 
-    def run_weekly(self) -> bool:
+    def run_weekly(self) -> Dict[str, List[str]]:
         """
         週次ニュース分析を実行
         """
@@ -631,10 +638,13 @@ class LLMFetcher:
         )
         response = self.fetch_response(prompt)
         output_name = f"{period_start.strftime('%Y-%m-%d')}_{period_end.strftime('%Y-%m-%d')}"
-        self.save_periodic_response(response, "weekly", output_name, "週次ニュース分析レポート")
-        return True
+        analysis_key = self.save_periodic_response(response, "weekly", output_name, "週次ニュース分析レポート")
+        return {
+            "articles": [],
+            "analysis": [analysis_key]
+        }
 
-    def run_monthly(self) -> bool:
+    def run_monthly(self) -> Dict[str, List[str]]:
         """
         月次ニュース分析を実行
         """
@@ -653,8 +663,54 @@ class LLMFetcher:
             period_end=month_end.strftime("%Y-%m-%d")
         )
         response = self.fetch_response(prompt)
-        self.save_periodic_response(response, "monthly", target_month, "月次ニュース分析レポート")
-        return True
+        analysis_key = self.save_periodic_response(response, "monthly", target_month, "月次ニュース分析レポート")
+        return {
+            "articles": [],
+            "analysis": [analysis_key]
+        }
+
+    def _send_email_notification(
+        self,
+        analysis_type: str,
+        artifacts: Dict[str, List[str]]
+    ) -> None:
+        """設定に応じてSESメール通知を送信する"""
+        email_config = self.config.get("email_notification", {})
+        if not email_config.get("enabled", False):
+            self.logger.info("メール通知は無効化されています")
+            return
+
+        enabled_types = email_config.get("enabled_analysis_types", [])
+        if analysis_type not in enabled_types:
+            self.logger.info(f"メール通知対象外の分析種別です: {analysis_type}")
+            return
+
+        if self.s3_handler is None:
+            self.logger.warning("S3Handlerがないためメール通知をスキップします")
+            return
+
+        has_artifacts = any(keys for keys in artifacts.values())
+        if not has_artifacts:
+            self.logger.warning("通知対象の生成ファイルがないためメール通知をスキップします")
+            return
+
+        try:
+            from email_notifier import EmailNotifier
+
+            notifier = EmailNotifier(
+                config=email_config,
+                s3_handler=self.s3_handler,
+                logger=self.logger
+            )
+            notifier.send_analysis_notification(
+                analysis_type=analysis_type,
+                artifacts=artifacts,
+                executed_at=self._get_now()
+            )
+        except Exception as e:
+            self.logger.error(f"メール通知に失敗しました: {str(e)}", exc_info=True)
+            if email_config.get("fail_on_send_error", False):
+                raise
 
     def run(self, analysis_type: str = "daily") -> bool:
         """
@@ -671,13 +727,15 @@ class LLMFetcher:
             self.logger.info(f"News Analyzer (Bedrock Claude) - 処理を開始します: {analysis_type}")
 
             if analysis_type == "daily":
-                self.run_daily()
+                artifacts = self.run_daily()
             elif analysis_type == "weekly":
-                self.run_weekly()
+                artifacts = self.run_weekly()
             elif analysis_type == "monthly":
-                self.run_monthly()
+                artifacts = self.run_monthly()
             else:
                 raise ValueError(f"未サポートの分析種別です: {analysis_type}")
+
+            self._send_email_notification(analysis_type, artifacts)
 
             self.logger.info("処理が正常に完了しました")
             self.logger.info("=" * 80)

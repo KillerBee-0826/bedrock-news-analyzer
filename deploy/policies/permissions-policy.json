@@ -46,6 +46,13 @@
         "arn:aws:bedrock:*:*:inference-profile/*",
         "arn:aws:bedrock:*::foundation-model/*"
       ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendEmail"
+      ],
+      "Resource": "*"
     }
   ]
 }

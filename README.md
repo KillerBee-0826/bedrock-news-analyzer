@@ -22,6 +22,7 @@ graph TD
         Lambda -- 読み込み --> S3Prompt
         Lambda -- 呼び出し --> Bedrock(Amazon Bedrock<br/>Claude Sonnet)
         Lambda -- 書き込み --> S3Responses
+        Lambda -- 通知 --> SES(Amazon SES)
         Lambda -- ログ出力 --> CloudWatch(CloudWatch Logs)
     end
 
@@ -38,9 +39,11 @@ graph TD
     -   `news_scraper.py` を使用して、複数の技術ニュースサイトから記事をスクレイピングします。
     -   `bedrock_client.py` を介して、収集した記事データをBedrock上のClaudeモデルに送信し、分析レポートを要求します。
     -   生成されたレポートと収集した記事一覧をS3バケットに保存します。
+    -   設定が有効な場合、S3の生成ファイルへの期限付きURLをAmazon SESでメール通知します。
 3.  **Amazon S3**: 設定、プロンプト、および出力結果を永続化します。
 4.  **Amazon Bedrock**: Claude Sonnetなどの高性能なLLMを提供し、高度なテキスト分析を実行します。
-5.  **Amazon CloudWatch Logs**: Lambda関数の実行ログを収集・保存し、監視とデバッグを容易にします。
+5.  **Amazon SES**: 分析完了後に、生成ファイルへの期限付きS3 URLをメールで送信します。
+6.  **Amazon CloudWatch Logs**: Lambda関数の実行ログを収集・保存し、監視とデバッグを容易にします。
 
 ## 主な機能
 
@@ -49,6 +52,7 @@ graph TD
 -   **ニュース収集**: 6つの主要技術メディア（@IT, ITmediaなど）からRSS経由で記事を自動収集します。
 -   **高精度な本文抽出**: `trafilatura`ライブラリとサイト固有のセレクタを組み合わせた3段階のフォールバック戦略により、広告などを除外した本文を高精度で抽出します。
 -   **AI分析**: Amazon Bedrockを介してClaudeモデルを利用し、トレンド分析、注目ニュースの深掘り、技術分類などを実行します。
+-   **メール通知**: Amazon SESで、非公開S3オブジェクトへの期限付きURLを通知できます。初期設定では日次分析のみ通知します。
 -   **設定の外部化**: `config.json`と`news_analysis_prompt.txt`をS3で管理するため、コードを再デプロイすることなく設定やプロンプトを変更できます。
 -   **簡単なデプロイ**: シェルスクリプト (`deploy/deploy.sh`) により、Lambda Layerと関数コードを一度にデプロイできます。
 
@@ -67,6 +71,7 @@ autoLLMGetter/
 ├── bedrock_client.py       # Amazon Bedrock APIクライアント
 ├── news_scraper.py         # ニュース収集・記事本文取得モジュール
 ├── s3_handler.py           # S3操作ヘルパー
+├── email_notifier.py       # Amazon SESメール通知
 ├── cloudwatch_logger.py    # CloudWatch Logs用ロガー
 ├── config/
 │   ├── config.json         # 設定ファイル（S3に配置）
@@ -96,8 +101,11 @@ Lambda関数に以下の権限を持つIAMロールが必要です。
     -   `AWSLambdaBasicExecutionRole` (CloudWatch Logsへの書き込み)
     -   `AmazonS3FullAccess` (または特定のバケットへの `s3:GetObject`, `s3:PutObject`)
     -   `BedrockFullAccess` (または特定のモデルに対する `bedrock:InvokeModel`)
+    -   Amazon SESで通知する場合は `ses:SendEmail`
 
 サンプルポリシーは `deploy/policies/permissions-policy.json` を参照してください。
+
+メール通知を使う場合は、SESで送信元メールアドレスまたはドメインをVerified identityとして検証してください。SES sandbox環境では、宛先メールアドレスも検証済みである必要があります。
 
 ### 3. 設定ファイルの準備とアップロード
 
@@ -244,6 +252,20 @@ S3に配置する `config.json` でシステムの挙動を制御します。
   "bedrock_max_tokens": 4096,
   "max_retries": 3,
   "retry_delay": 5,
+  "output_prefixes": {
+    "daily": "daily",
+    "weekly": "weekly",
+    "monthly": "monthly"
+  },
+  "email_notification": {
+    "enabled": true,
+    "enabled_analysis_types": ["daily"],
+    "ses_region": "ap-northeast-1",
+    "sender": "verified-sender@example.com",
+    "recipients": ["recipient@example.com"],
+    "presigned_url_expires_seconds": 604800,
+    "fail_on_send_error": false
+  },
   "news_scraping": {
     "enabled": true,
     "scrape_yesterday_articles": true, // true:前日, false:当日
@@ -261,3 +283,15 @@ S3に配置する `config.json` でシステムの挙動を制御します。
   }
 }
 ```
+
+### メール通知設定
+
+`email_notification.enabled` を `true` にすると、分析完了後にAmazon SESでメールを送信します。メール本文にはS3オブジェクトを添付せず、非公開S3オブジェクトへのpresigned URLを記載します。初期値ではURLの有効期限は24時間です。
+
+-   `enabled_analysis_types`: 通知対象の分析種別です。初期設定は `["daily"]` で、日次のみ通知します。
+-   `sender`: SESで検証済みの送信元メールアドレスまたはドメイン配下のアドレスです。
+-   `recipients`: 通知先メールアドレスの配列です。SES sandboxでは宛先も検証済みである必要があります。
+-   `presigned_url_expires_seconds`: S3 presigned URLの有効期限です。
+-   `fail_on_send_error`: `false` の場合、メール送信に失敗しても分析処理自体は成功扱いにします。`true` の場合はLambdaを失敗扱いにします。
+
+日次通知には `daily/YYYY-MM-DD_articles.txt` と `daily/YYYY-MM-DD.txt` の2リンクが含まれます。週次・月次を `enabled_analysis_types` に追加した場合は、それぞれ分析結果ファイルのリンクのみを通知します。
