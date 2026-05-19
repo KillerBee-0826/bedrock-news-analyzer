@@ -1,297 +1,137 @@
-# Bedrock Claude 自動ニュース分析Lambda
+# Bedrock Claude 自動ニュース分析 Lambda
 
-AWS Lambda上で動作し、毎日日本の主要技術メディアから記事を収集・分析し、Amazon Bedrock上のClaudeモデルでレポートを生成するシステムです。
+AWS Lambda 上で日本の技術ニュースを収集し、Amazon Bedrock の Claude モデルで分析して、結果を S3 に保存するサーバーレスアプリケーションです。日次・週次・月次の分析に対応し、必要に応じて Amazon SES で分析結果への期限付き S3 URL を通知します。
 
 ## アーキテクチャ
 
-このシステムは、以下のAWSサービスを連携させたサーバーレスアーキテクチャで構築されています。
-
 ```mermaid
 graph TD
-    subgraph AWS
-        EventBridge(EventBridge<br/>Scheduler) --> Lambda(AWS Lambda<br/>claude-news-analyzer)
-        
-        subgraph "Amazon S3"
-            direction LR
-            S3Config(config.json)
-            S3Prompt(prompt.txt)
-            S3Responses(分析結果)
-        end
-
-        Lambda -- 読み込み --> S3Config
-        Lambda -- 読み込み --> S3Prompt
-        Lambda -- 呼び出し --> Bedrock(Amazon Bedrock<br/>Claude Sonnet)
-        Lambda -- 書き込み --> S3Responses
-        Lambda -- 通知 --> SES(Amazon SES)
-        Lambda -- ログ出力 --> CloudWatch(CloudWatch Logs)
-    end
-
-    subgraph "外部サイト"
-        NewsSites(ニュースサイト)
-    end
-
-    Lambda -- スクレイピング --> NewsSites
+    EventBridge(EventBridge Scheduler) --> Lambda(AWS Lambda)
+    Lambda --> S3Config(S3 config/)
+    Lambda --> Bedrock(Amazon Bedrock)
+    Lambda --> S3Output(S3 daily/ weekly/ monthly/)
+    Lambda --> SES(Amazon SES)
+    Lambda --> CloudWatch(CloudWatch Logs)
+    Lambda --> NewsSites(ニュースサイト)
 ```
 
-1.  **Amazon EventBridge**: 毎日定刻（例: JST 9:00）にLambda関数をトリガーします。
-2.  **AWS Lambda**: メインの処理を実行するPythonアプリケーション。
-    -   S3から設定ファイルとプロンプトテンプレートを読み込みます。
-    -   `news_scraper.py` を使用して、複数の技術ニュースサイトから記事をスクレイピングします。
-    -   `bedrock_client.py` を介して、収集した記事データをBedrock上のClaudeモデルに送信し、分析レポートを要求します。
-    -   生成されたレポートと収集した記事一覧をS3バケットに保存します。
-    -   設定が有効な場合、S3の生成ファイルへの期限付きURLをAmazon SESでメール通知します。
-3.  **Amazon S3**: 設定、プロンプト、および出力結果を永続化します。
-4.  **Amazon Bedrock**: Claude Sonnetなどの高性能なLLMを提供し、高度なテキスト分析を実行します。
-5.  **Amazon SES**: 分析完了後に、生成ファイルへの期限付きS3 URLをメールで送信します。
-6.  **Amazon CloudWatch Logs**: Lambda関数の実行ログを収集・保存し、監視とデバッグを容易にします。
+1. EventBridge が `analysis_type` を渡して Lambda を定期実行します。
+2. Lambda が S3 の設定ファイルとプロンプトを読み込みます。
+3. 日次分析では RSS と記事本文を取得し、Bedrock で分析します。
+4. 週次・月次分析では S3 の前段レポートを読み込み、Bedrock で集約します。
+5. 分析結果と記事一覧を S3 に保存し、設定が有効な場合は SES で presigned URL を通知します。
 
 ## 主な機能
 
--   **サーバーレス**: AWS Lambdaで実行され、サーバーのプロビジョニングや管理が不要です。
--   **自動実行**: Amazon EventBridgeにより、スケジュールベースで完全に自動化されています。
--   **ニュース収集**: 6つの主要技術メディア（@IT, ITmediaなど）からRSS経由で記事を自動収集します。
--   **高精度な本文抽出**: `trafilatura`ライブラリとサイト固有のセレクタを組み合わせた3段階のフォールバック戦略により、広告などを除外した本文を高精度で抽出します。
--   **AI分析**: Amazon Bedrockを介してClaudeモデルを利用し、トレンド分析、注目ニュースの深掘り、技術分類などを実行します。
--   **メール通知**: Amazon SESで、非公開S3オブジェクトへの期限付きURLを通知できます。初期設定では日次分析のみ通知します。
--   **設定の外部化**: `config.json`と`news_analysis_prompt.txt`をS3で管理するため、コードを再デプロイすることなく設定やプロンプトを変更できます。
--   **簡単なデプロイ**: シェルスクリプト (`deploy/deploy.sh`) により、Lambda Layerと関数コードを一度にデプロイできます。
+- 日次・週次・月次のニュース分析
+- RSS と本文抽出による技術ニュース収集
+- Amazon Bedrock Claude モデルによる分析レポート生成
+- S3 配置の `config.json` とプロンプトによる設定外部化
+- Amazon SES によるメール通知
+- Secrets Manager に保存した署名用 IAM ユーザーでの長期 presigned URL 生成
+- EventBridge によるスケジュール実行
 
 ## 使用技術
 
--   **クラウド**: AWS Lambda, Amazon S3, Amazon Bedrock, Amazon CloudWatch, Amazon EventBridge
--   **言語**: Python 3.11
--   **主要ライブラリ**: `boto3`, `requests`, `feedparser`, `trafilatura`, `beautifulsoup4`, `chardet`
+- AWS Lambda, Amazon S3, Amazon Bedrock, Amazon SES, Amazon EventBridge, CloudWatch Logs, Secrets Manager
+- Python 3.11
+- `boto3`, `requests`, `feedparser`, `trafilatura`, `beautifulsoup4`, `chardet`
 
-## ディレクトリ構造
+## ディレクトリ構成
 
-```
+```text
 autoLLMGetter/
-├── lambda_handler.py       # Lambda関数のエントリーポイント
-├── llm_fetcher.py          # Bedrock呼び出しと全体フロー制御
-├── bedrock_client.py       # Amazon Bedrock APIクライアント
-├── news_scraper.py         # ニュース収集・記事本文取得モジュール
-├── s3_handler.py           # S3操作ヘルパー
-├── email_notifier.py       # Amazon SESメール通知
-├── cloudwatch_logger.py    # CloudWatch Logs用ロガー
+├── lambda_handler.py       # Lambda エントリーポイント
+├── llm_fetcher.py          # 全体フロー制御
+├── bedrock_client.py       # Amazon Bedrock クライアント
+├── news_scraper.py         # RSS 取得・本文抽出
+├── s3_handler.py           # S3 操作
+├── email_notifier.py       # SES メール通知
+├── cloudwatch_logger.py    # ロガー
 ├── config/
-│   ├── config.json         # 設定ファイル（S3に配置）
-│   └── news_analysis_prompt.txt # プロンプトテンプレート（S3に配置）
+│   ├── config.json
+│   ├── news_analysis_prompt.txt
+│   ├── weekly_news_analysis_prompt.txt
+│   └── monthly_news_analysis_prompt.txt
 ├── deploy/
-│   ├── deploy.sh           # デプロイスクリプト
-│   ├── build_layer.sh      # Lambda Layer構築スクリプト
-│   └── policies/           # IAMポリシーサンプル
-├── requirements.txt        # ローカルテスト用依存関係
-├── requirements-lambda.txt # Lambda Layer用依存関係
-└── README.md               # このファイル
+│   ├── deploy.sh
+│   ├── build_layer.sh
+│   └── policies/
+├── LAMBDA_DEPLOYMENT.md    # AWS デプロイ・運用手順
+├── requirements.txt
+└── requirements-lambda.txt
 ```
 
-## デプロイ手順
+## 最短セットアップ
 
-### 1. 前提条件
+詳細な初回構築、IAM、Secrets Manager、SES、EventBridge、ロールバック、トラブルシューティングは [LAMBDA_DEPLOYMENT.md](./LAMBDA_DEPLOYMENT.md) を参照してください。
 
--   [AWS CLI](https://aws.amazon.com/cli/)がインストールされ、認証情報が設定済みであること。
--   デプロイ先のAWSリージョンとS3バケット名、IAMロールのARNを決定しておくこと。
+### 1. ローカル環境
 
-### 2. IAMロールの作成
-
-Lambda関数に以下の権限を持つIAMロールが必要です。
-
--   **信頼関係**: `lambda.amazonaws.com`
--   **権限ポリシー**: 
-    -   `AWSLambdaBasicExecutionRole` (CloudWatch Logsへの書き込み)
-    -   `AmazonS3FullAccess` (または特定のバケットへの `s3:GetObject`, `s3:PutObject`)
-    -   `BedrockFullAccess` (または特定のモデルに対する `bedrock:InvokeModel`)
-    -   Amazon SESで通知する場合は `ses:SendEmail`
-
-サンプルポリシーは `deploy/policies/permissions-policy.json` を参照してください。
-
-メール通知を使う場合は、SESで送信元メールアドレスまたはドメインをVerified identityとして検証してください。SES sandbox環境では、宛先メールアドレスも検証済みである必要があります。
-
-### 3. 設定ファイルの準備とアップロード
-
-1.  S3バケットを作成します。
-    ```bash
-    aws s3 mb s3://<your-bucket-name> --region <your-region>
-    ```
-2.  `config/config.json` と各プロンプトファイルを編集します。
-3.  編集したファイルをS3バケットの `config/` プレフィックスにアップロードします。
-    ```bash
-    aws s3 cp config/config.json s3://<your-bucket-name>/config/config.json
-    aws s3 cp config/news_analysis_prompt.txt s3://<your-bucket-name>/config/news_analysis_prompt.txt
-    aws s3 cp config/weekly_news_analysis_prompt.txt s3://<your-bucket-name>/config/weekly_news_analysis_prompt.txt
-    aws s3 cp config/monthly_news_analysis_prompt.txt s3://<your-bucket-name>/config/monthly_news_analysis_prompt.txt
-    ```
-
-### 4. デプロイスクリプトの実行
-
-1.  `deploy/deploy.sh` を開き、環境に合わせて変数を設定するか、環境変数としてエクスポートします。
-    ```bash
-    export LAMBDA_ROLE_ARN="arn:aws:iam::123456789012:role/your-lambda-role"
-    export S3_BUCKET_NAME="your-bucket-name"
-    export AWS_REGION="ap-northeast-1"
-    ```
-2.  デプロイスクリプトを実行します。
-    ```bash
-    ./deploy/deploy.sh
-    ```
-    これにより、`requirements-lambda.txt` に基づくLambda Layerが構築・公開され、関数コードがパッケージ化されてデプロイされます。
-    既存の Lambda 関数がある場合は削除せず、コードと設定が更新されます。
-
-### 5. 定期実行の設定 (EventBridge)
-
-デプロイ成功後、表示されるAWS CLIコマンドを参考にEventBridgeルールを作成し、Lambda関数をターゲットとして設定します。
-
-1.  **ルールを作成** (毎日 00:00 UTC / 09:00 JST に日次分析を実行):
-    ```bash
-    aws events put-rule \
-      --name claude-news-analyzer-daily \
-      --schedule-expression 'cron(0 0 * * ? *)' \
-      --region ${AWS_REGION}
-    ```
-2.  **ターゲットを設定**:
-    ```bash
-# YOUR_ACCOUNT_IDとFUNCTION_NAMEを実際の値に置き換えてください
-FUNCTION_ARN="arn:aws:lambda:${AWS_REGION}:YOUR_ACCOUNT_ID:function:claude-news-analyzer"
-
-cat > /tmp/claude-news-analyzer-daily-target.json <<EOF
-[
-  {
-    "Id": "1",
-    "Arn": "${FUNCTION_ARN}",
-    "Input": "{\"analysis_type\":\"daily\"}"
-  }
-]
-EOF
-
-aws events put-targets \
-  --rule claude-news-analyzer-daily \
-  --targets file:///tmp/claude-news-analyzer-daily-target.json \
-  --region ${AWS_REGION}
-    ```
-    週次・月次は同じLambdaに別ルールで `analysis_type` を渡します。
-    ```bash
-aws events put-rule \
-  --name claude-news-analyzer-weekly \
-  --schedule-expression 'cron(0 1 ? * SUN *)' \
-  --region ${AWS_REGION}
-
-cat > /tmp/claude-news-analyzer-weekly-target.json <<EOF
-[
-  {
-    "Id": "1",
-    "Arn": "${FUNCTION_ARN}",
-    "Input": "{\"analysis_type\":\"weekly\"}"
-  }
-]
-EOF
-
-aws events put-targets \
-  --rule claude-news-analyzer-weekly \
-  --targets file:///tmp/claude-news-analyzer-weekly-target.json \
-  --region ${AWS_REGION}
-
-aws events put-rule \
-  --name claude-news-analyzer-monthly \
-  --schedule-expression 'cron(0 2 1 * ? *)' \
-  --region ${AWS_REGION}
-
-cat > /tmp/claude-news-analyzer-monthly-target.json <<EOF
-[
-  {
-    "Id": "1",
-    "Arn": "${FUNCTION_ARN}",
-    "Input": "{\"analysis_type\":\"monthly\"}"
-  }
-]
-EOF
-
-aws events put-targets \
-  --rule claude-news-analyzer-monthly \
-  --targets file:///tmp/claude-news-analyzer-monthly-target.json \
-  --region ${AWS_REGION}
-    ```
-3.  **Lambdaにトリガー権限を追加**:
-    ```bash
-    aws lambda add-permission \
-      --function-name claude-news-analyzer \
-      --statement-id EventBridgeInvoke \
-      --action "lambda:InvokeFunction" \
-      --principal events.amazonaws.com \
-      --source-arn arn:aws:events:${AWS_REGION}:YOUR_ACCOUNT_ID:rule/claude-news-analyzer-daily \
-      --region ${AWS_REGION}
-    ```
-
-## ローカルでのテスト
-
-`lambda_handler.py` には、ローカル環境でLambda関数の動作をシミュレートするためのテスト関数が含まれています。
-
-1.  **依存関係のインストール**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-2.  **AWS認証情報の設定**: ローカル環境でAWSの認証情報（例: `~/.aws/credentials`）が設定されていることを確認してください。
-3.  **環境変数の設定**:
-    ```bash
-    export S3_BUCKET_NAME="your-s3-bucket-name"
-    ```
-4.  **テストの実行**:
-    ```bash
-    python lambda_handler.py
-    ```
-    これにより、`local_test()` 関数が実行され、実際の `lambda_handler` がモックイベントで呼び出されます。処理結果はコンソールに出力されます。
-
-## 設定ファイル (`config.json`)
-
-S3に配置する `config.json` でシステムの挙動を制御します。
-
-```json
-{
-  "llm_provider": "bedrock",
-  "bedrock_model": "anthropic.claude-3-sonnet-20240229-v1:0", // 使用するBedrockモデルID
-  "bedrock_region": "us-east-1", // Bedrockが利用可能なリージョン
-  "bedrock_max_tokens": 4096,
-  "max_retries": 3,
-  "retry_delay": 5,
-  "output_prefixes": {
-    "daily": "daily",
-    "weekly": "weekly",
-    "monthly": "monthly"
-  },
-  "email_notification": {
-    "enabled": true,
-    "enabled_analysis_types": ["daily"],
-    "ses_region": "ap-northeast-1",
-    "sender": "verified-sender@example.com",
-    "recipients": ["recipient@example.com"],
-    "presigned_url_expires_seconds": 604800,
-    "fail_on_send_error": false
-  },
-  "news_scraping": {
-    "enabled": true,
-    "scrape_yesterday_articles": true, // true:前日, false:当日
-    "timezone": "Asia/Tokyo",
-    "parallel_workers": 3, // RSS取得の並列数
-    "max_articles_per_site": 30,
-    "content_fetching": {
-      "enabled": true, // 本文取得を有効化
-      "parallel_content_workers": 5, // 本文取得の並列数
-      "min_content_length": 200
-    },
-    "sites": [
-      // 収集対象サイトのリスト
-    ]
-  }
-}
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### メール通知設定
+### 2. S3 設定ファイル
 
-`email_notification.enabled` を `true` にすると、分析完了後にAmazon SESでメールを送信します。メール本文にはS3オブジェクトを添付せず、非公開S3オブジェクトへのpresigned URLを記載します。初期値ではURLの有効期限は24時間です。
+`config/config.json` と 3 種類のプロンプトを編集し、S3 の `config/` 配下へアップロードします。
 
--   `enabled_analysis_types`: 通知対象の分析種別です。初期設定は `["daily"]` で、日次のみ通知します。
--   `sender`: SESで検証済みの送信元メールアドレスまたはドメイン配下のアドレスです。
--   `recipients`: 通知先メールアドレスの配列です。SES sandboxでは宛先も検証済みである必要があります。
--   `presigned_url_expires_seconds`: S3 presigned URLの有効期限です。
--   `fail_on_send_error`: `false` の場合、メール送信に失敗しても分析処理自体は成功扱いにします。`true` の場合はLambdaを失敗扱いにします。
+```bash
+aws s3 cp config/config.json s3://<your-bucket-name>/config/config.json
+aws s3 cp config/news_analysis_prompt.txt s3://<your-bucket-name>/config/news_analysis_prompt.txt
+aws s3 cp config/weekly_news_analysis_prompt.txt s3://<your-bucket-name>/config/weekly_news_analysis_prompt.txt
+aws s3 cp config/monthly_news_analysis_prompt.txt s3://<your-bucket-name>/config/monthly_news_analysis_prompt.txt
+```
 
-日次通知には `daily/YYYY-MM-DD_articles.txt` と `daily/YYYY-MM-DD.txt` の2リンクが含まれます。週次・月次を `enabled_analysis_types` に追加した場合は、それぞれ分析結果ファイルのリンクのみを通知します。
+### 3. 初回デプロイ・再デプロイ
+
+Lambda 実行ロールと周辺 AWS リソースを準備したうえで、同じスクリプトを初回構築と再デプロイに使います。
+
+```bash
+export LAMBDA_ROLE_ARN="arn:aws:iam::ACCOUNT_ID:role/lambda-claude-news-analyzer"
+export S3_BUCKET_NAME="claude-news-analyzer"
+export AWS_REGION="ap-northeast-1"
+./deploy/deploy.sh
+```
+
+Lambda 実行ロールの権限例は `deploy/policies/permissions-policy.json` を正本とします。メール通知で Secrets Manager の署名用 IAM ユーザーを使う場合は、同ポリシーの `secretsmanager:GetSecretValue` も反映してください。
+
+### 4. ローカル実行
+
+AWS 認証情報と S3 バケットを設定したうえで、モックイベントで Lambda 処理を実行できます。
+
+```bash
+export S3_BUCKET_NAME="your-s3-bucket-name"
+python lambda_handler.py
+```
+
+## 設定ファイル
+
+S3 に配置する `config/config.json` でモデル、プロンプト、出力先、スクレイピング、メール通知を制御します。
+
+主要項目:
+
+- `bedrock_model`: 使用する Bedrock モデル ID
+- `bedrock_region`: Bedrock 呼び出しリージョン
+- `prompt_paths`: `daily`, `weekly`, `monthly` ごとのプロンプトパス
+- `output_prefixes`: 分析結果の S3 プレフィックス
+- `news_scraping`: RSS と本文取得の対象・並列数・本文長など
+- `email_notification`: SES 通知と presigned URL 署名方式
+
+### メール通知
+
+`email_notification.enabled` を `true` にすると、分析完了後に S3 オブジェクトへの presigned URL を SES で送信します。主な項目は次のとおりです。
+
+- `enabled_analysis_types`: 通知対象の分析種別。例: `["daily", "weekly", "monthly"]`
+- `sender`: SES で検証済みの送信元アドレス
+- `recipients`: 通知先アドレス
+- `presigned_url_expires_seconds`: URL 有効期限。Signature Version 4 の上限に合わせ 604800 秒以下
+- `presigned_url_signer_type`: `iam_user_secret` を指定すると Secrets Manager の IAM ユーザーキーで署名
+- `presigned_url_signing_secret_id`: 署名用 IAM ユーザーキーを保存した Secret 名または ARN
+- `presigned_url_signing_secret_region`: Secret を取得するリージョン
+- `presigned_url_s3_region`: presigned URL を生成する S3 クライアントのリージョン
+- `fail_on_send_error`: メール送信失敗時に Lambda を失敗扱いにするか
+
+署名用 IAM ユーザー、Secrets Manager、SES sandbox、`aws_session_token` を含めない確認などの運用手順は [LAMBDA_DEPLOYMENT.md](./LAMBDA_DEPLOYMENT.md) に集約しています。

@@ -4,6 +4,7 @@ Amazon SESによる分析完了メール通知
 S3上の非公開オブジェクトを期限付きURLで共有する。
 """
 
+import json
 import logging
 from datetime import datetime
 from html import escape
@@ -11,14 +12,19 @@ from typing import Dict, List, Optional
 
 try:
     import boto3
+    from botocore.config import Config
     from botocore.exceptions import ClientError
 except ImportError:
     boto3 = None
+    Config = None
     ClientError = Exception
 
 
 class EmailNotifier:
     """Amazon SESを使って分析結果の通知メールを送信するクラス"""
+
+    MAX_PRESIGNED_URL_EXPIRES_SECONDS = 604800
+    SIGNER_TYPE_IAM_USER_SECRET = "iam_user_secret"
 
     def __init__(
         self,
@@ -41,6 +47,8 @@ class EmailNotifier:
         self.s3_handler = s3_handler
         self.logger = logger or logging.getLogger("EmailNotifier")
         self.ses_client = boto3.client("sesv2", region_name=self.config.get("ses_region", "ap-northeast-1"))
+        self.presigned_url_signer_type = self.config.get("presigned_url_signer_type")
+        self._presigned_url_s3_client = None
 
     def send_analysis_notification(
         self,
@@ -62,6 +70,8 @@ class EmailNotifier:
             raise ValueError("email_notification.sender と recipients を設定してください")
 
         expires_seconds = int(self.config.get("presigned_url_expires_seconds", 86400))
+        self._validate_presigned_url_expires_seconds(expires_seconds)
+
         subject = self._build_subject(analysis_type, executed_at)
         text_body, html_body = self._build_body(analysis_type, artifacts, executed_at, expires_seconds)
 
@@ -165,8 +175,10 @@ class EmailNotifier:
         return links
 
     def _generate_presigned_url(self, key: str, expires_seconds: int) -> str:
+        self._validate_presigned_url_expires_seconds(expires_seconds)
         try:
-            return self.s3_handler.s3_client.generate_presigned_url(
+            s3_client = self._get_presigned_url_s3_client()
+            return s3_client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": self.s3_handler.bucket_name, "Key": key},
                 ExpiresIn=expires_seconds
@@ -174,6 +186,83 @@ class EmailNotifier:
         except ClientError as e:
             self.logger.error(f"presigned URL生成に失敗しました: key={key}, error={e}")
             raise
+
+    def _validate_presigned_url_expires_seconds(self, expires_seconds: int) -> None:
+        if expires_seconds > self.MAX_PRESIGNED_URL_EXPIRES_SECONDS:
+            raise ValueError(
+                "email_notification.presigned_url_expires_seconds は604800秒以下にしてください"
+            )
+
+    def _get_presigned_url_s3_client(self):
+        if not self.presigned_url_signer_type:
+            return self.s3_handler.s3_client
+
+        if self.presigned_url_signer_type != self.SIGNER_TYPE_IAM_USER_SECRET:
+            raise ValueError(
+                "email_notification.presigned_url_signer_type は "
+                f"{self.SIGNER_TYPE_IAM_USER_SECRET} または未指定にしてください"
+            )
+
+        if self._presigned_url_s3_client is None:
+            self._presigned_url_s3_client = self._create_iam_user_secret_s3_client()
+        return self._presigned_url_s3_client
+
+    def _create_iam_user_secret_s3_client(self):
+        credentials = self._load_presigned_url_signing_credentials()
+        s3_region = self.config.get("presigned_url_s3_region", "ap-northeast-1")
+        return boto3.client(
+            "s3",
+            region_name=s3_region,
+            aws_access_key_id=credentials["aws_access_key_id"],
+            aws_secret_access_key=credentials["aws_secret_access_key"],
+            config=Config(signature_version="s3v4")
+        )
+
+    def _load_presigned_url_signing_credentials(self) -> Dict[str, str]:
+        secret_id = self.config.get(
+            "presigned_url_signing_secret_id",
+            "claude-news-analyzer/s3-presign-user"
+        )
+        secret_region = self.config.get("presigned_url_signing_secret_region", "ap-northeast-1")
+
+        try:
+            secrets_client = boto3.client("secretsmanager", region_name=secret_region)
+            response = secrets_client.get_secret_value(SecretId=secret_id)
+        except ClientError as e:
+            self.logger.error(
+                f"presigned URL署名用シークレットの取得に失敗しました: secret_id={secret_id}, error={e}"
+            )
+            raise
+
+        secret_string = response.get("SecretString")
+        if not secret_string:
+            raise ValueError("presigned URL署名用シークレットにSecretStringがありません")
+
+        try:
+            credentials = json.loads(secret_string)
+        except json.JSONDecodeError as e:
+            raise ValueError("presigned URL署名用シークレットはJSON形式にしてください") from e
+
+        if not isinstance(credentials, dict):
+            raise ValueError("presigned URL署名用シークレットはJSONオブジェクトにしてください")
+
+        required_keys = ["aws_access_key_id", "aws_secret_access_key"]
+        missing_keys = [key for key in required_keys if not credentials.get(key)]
+        if missing_keys:
+            raise ValueError(
+                "presigned URL署名用シークレットに必須キーがありません: "
+                + ", ".join(missing_keys)
+            )
+
+        if "aws_session_token" in credentials:
+            raise ValueError(
+                "presigned URL署名用シークレットにaws_session_tokenを含めないでください"
+            )
+
+        return {
+            "aws_access_key_id": credentials["aws_access_key_id"],
+            "aws_secret_access_key": credentials["aws_secret_access_key"]
+        }
 
     def _analysis_label(self, analysis_type: str) -> str:
         labels = {

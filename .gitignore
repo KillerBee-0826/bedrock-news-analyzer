@@ -1,6 +1,5 @@
 # Environment variables
 .env
-LAMBDA_DEPLOYMENT.md
 
 # Python
 __pycache__/
