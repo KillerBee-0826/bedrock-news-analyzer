@@ -18,6 +18,7 @@ try:
     import pytz
     from bedrock_client import BedrockClient
     from botocore.exceptions import ClientError
+    from report_html_renderer import render_report_html
 except ImportError as e:
     print(f"必要なパッケージがインストールされていません: {e}")
     print("Lambda環境ではboto3が組み込まれています")
@@ -391,6 +392,7 @@ class LLMFetcher:
         daily_file_date_str = daily_file_date.strftime("%Y-%m-%d")
         daily_prefix = self._get_output_prefix("daily")
         candidate_keys = [
+            f"{daily_prefix}/{daily_file_date_str}.md",
             f"{daily_prefix}/{daily_file_date_str}.txt",
             f"responses/{daily_file_date_str}.txt"
         ]
@@ -411,15 +413,15 @@ class LLMFetcher:
 
         weekly_prefix = self._get_output_prefix("weekly")
         keys = self.s3_handler.list_objects(f"{weekly_prefix}/")
-        target_keys = []
+        target_keys_by_period = {}
 
         for key in keys:
             filename = Path(key).name
-            if not filename.endswith(".txt"):
+            if not (filename.endswith(".md") or filename.endswith(".txt")):
                 continue
 
             try:
-                period_part = filename.removesuffix(".txt")
+                period_part = filename.removesuffix(".md").removesuffix(".txt")
                 _, end_date_str = period_part.split("_", 1)
                 period_end = datetime.strptime(end_date_str, "%Y-%m-%d").date()
             except ValueError:
@@ -427,8 +429,11 @@ class LLMFetcher:
                 continue
 
             if month_start <= period_end <= month_end:
-                target_keys.append(key)
+                existing_key = target_keys_by_period.get(period_part)
+                if existing_key is None or filename.endswith(".md"):
+                    target_keys_by_period[period_part] = key
 
+        target_keys = list(target_keys_by_period.values())
         target_keys.sort()
         if not target_keys:
             raise ValueError(
@@ -513,32 +518,45 @@ class LLMFetcher:
             # Lambda環境（S3Handler使用）
             if self.s3_handler is not None:
                 prefix = self._get_output_prefix("daily")
-                s3_key = f"{prefix}/{date_str}.txt"
+                s3_key = f"{prefix}/{date_str}.md"
 
                 # S3では追記が難しいため、既存ファイルを読み込んで結合
                 if self.s3_handler.object_exists(s3_key):
                     existing_content = self.s3_handler.load_text(s3_key)
                     content = existing_content + "\n\n" + "=" * 80 + "\n\n" + content
 
-                self.s3_handler.save_text(s3_key, content)
+                self.s3_handler.save_markdown(s3_key, content)
                 self.logger.info(f"LLM分析レポートをS3に保存しました: s3://{self.s3_handler.bucket_name}/{s3_key}")
+                html_key = f"{prefix}/{date_str}.html"
+                html_content = render_report_html("ニュース分析レポート", content)
+                self.s3_handler.save_html(html_key, html_content)
+                self.logger.info(f"LLM分析HTMLをS3に保存しました: s3://{self.s3_handler.bucket_name}/{html_key}")
+                if section == "news_analysis":
+                    return html_key
                 return s3_key
 
             # ローカル環境（ファイルシステム使用）
             else:
                 responses_dir = Path(self.config["responses_dir"]) / self._get_output_prefix("daily")
                 responses_dir.mkdir(parents=True, exist_ok=True)
-                output_file = responses_dir / f"{date_str}.txt"
+                output_file = responses_dir / f"{date_str}.md"
 
-                # 既存ファイルがあれば追記モード、なければ新規作成
-                mode = "a" if output_file.exists() else "w"
+                if output_file.exists():
+                    existing_content = output_file.read_text(encoding="utf-8")
+                    content = existing_content + "\n\n" + "=" * 80 + "\n\n" + content
 
-                with open(output_file, mode, encoding="utf-8") as f:
-                    if mode == "a":
-                        f.write("\n\n" + "=" * 80 + "\n\n")
+                with open(output_file, "w", encoding="utf-8") as f:
                     f.write(content)
 
                 self.logger.info(f"回答をファイルに保存しました: {output_file}")
+                html_file = responses_dir / f"{date_str}.html"
+                html_file.write_text(
+                    render_report_html("ニュース分析レポート", content),
+                    encoding="utf-8"
+                )
+                self.logger.info(f"LLM分析HTMLをファイルに保存しました: {html_file}")
+                if section == "news_analysis":
+                    return str(html_file)
                 return str(output_file)
 
         except Exception as e:
@@ -566,18 +584,25 @@ class LLMFetcher:
         prefix = self._get_output_prefix(analysis_type)
 
         if self.s3_handler is not None:
-            s3_key = f"{prefix}/{output_name}.txt"
-            self.s3_handler.save_text(s3_key, content)
+            s3_key = f"{prefix}/{output_name}.md"
+            self.s3_handler.save_markdown(s3_key, content)
             self.logger.info(f"{title}をS3に保存しました: s3://{self.s3_handler.bucket_name}/{s3_key}")
-            return s3_key
+            html_key = f"{prefix}/{output_name}.html"
+            html_content = render_report_html(title, content)
+            self.s3_handler.save_html(html_key, html_content)
+            self.logger.info(f"{title}HTMLをS3に保存しました: s3://{self.s3_handler.bucket_name}/{html_key}")
+            return html_key
 
         responses_dir = Path(self.config["responses_dir"]) / prefix
         responses_dir.mkdir(parents=True, exist_ok=True)
-        output_file = responses_dir / f"{output_name}.txt"
+        output_file = responses_dir / f"{output_name}.md"
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(content)
         self.logger.info(f"{title}をファイルに保存しました: {output_file}")
-        return str(output_file)
+        html_file = responses_dir / f"{output_name}.html"
+        html_file.write_text(render_report_html(title, content), encoding="utf-8")
+        self.logger.info(f"{title}HTMLをファイルに保存しました: {html_file}")
+        return str(html_file)
 
     def run_daily(self) -> Dict[str, List[str]]:
         """

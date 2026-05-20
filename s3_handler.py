@@ -106,12 +106,7 @@ class S3Handler:
         """
         try:
             self.logger.info(f"S3にテキストファイルを保存: s3://{self.bucket_name}/{key}")
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=key,
-                Body=content.encode('utf-8'),
-                ContentType='text/plain; charset=utf-8'
-            )
+            self._put_text_object(key, content, 'text/plain; charset=utf-8')
             self.logger.info(f"保存完了: s3://{self.bucket_name}/{key} ({len(content)} 文字)")
         except ClientError as e:
             error_code = e.response['Error']['Code']
@@ -120,6 +115,60 @@ class S3Handler:
             else:
                 self.logger.error(f"S3アクセスエラー: {e}")
             raise
+
+    def save_markdown(self, key: str, content: str) -> None:
+        """
+        S3にMarkdownファイルを保存
+
+        Args:
+            key: S3オブジェクトキー（例: "daily/2026-04-26.md"）
+            content: 保存するMarkdown
+
+        Raises:
+            ClientError: S3アクセスエラー
+        """
+        try:
+            self.logger.info(f"S3にMarkdownファイルを保存: s3://{self.bucket_name}/{key}")
+            self._put_text_object(key, content, 'text/markdown; charset=utf-8')
+            self.logger.info(f"保存完了: s3://{self.bucket_name}/{key} ({len(content)} 文字)")
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchBucket':
+                self.logger.error(f"S3バケットが存在しません: {self.bucket_name}")
+            else:
+                self.logger.error(f"S3アクセスエラー: {e}")
+            raise
+
+    def save_html(self, key: str, content: str) -> None:
+        """
+        S3にHTMLファイルを保存
+
+        Args:
+            key: S3オブジェクトキー（例: "daily/2026-04-26.html"）
+            content: 保存するHTML
+
+        Raises:
+            ClientError: S3アクセスエラー
+        """
+        try:
+            self.logger.info(f"S3にHTMLファイルを保存: s3://{self.bucket_name}/{key}")
+            self._put_text_object(key, content, 'text/html; charset=utf-8')
+            self.logger.info(f"保存完了: s3://{self.bucket_name}/{key} ({len(content)} 文字)")
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchBucket':
+                self.logger.error(f"S3バケットが存在しません: {self.bucket_name}")
+            else:
+                self.logger.error(f"S3アクセスエラー: {e}")
+            raise
+
+    def _put_text_object(self, key: str, content: str, content_type: str) -> None:
+        self.s3_client.put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=content.encode('utf-8'),
+            ContentType=content_type
+        )
 
     def object_exists(self, key: str) -> bool:
         """

@@ -319,9 +319,12 @@ TODAY="$(TZ=Asia/Tokyo date +%Y-%m-%d)"
 aws s3 ls "s3://${S3_BUCKET_NAME}/daily/"
 aws s3 ls "s3://${S3_BUCKET_NAME}/weekly/"
 aws s3 ls "s3://${S3_BUCKET_NAME}/monthly/"
-aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}.txt" ./
+aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}.md" ./
+aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}.html" ./
 aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}_articles.txt" ./
 ```
+
+分析結果は `.md` と `.html` の両方を保存します。週次・月次の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。メール通知の分析結果リンクは閲覧用の `.html` を指します。日次の収集記事一覧は `_articles.txt` のままです。
 
 メール通知:
 
@@ -330,6 +333,7 @@ aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}_articles.txt" ./
 - Secret JSON に `aws_access_key_id` と `aws_secret_access_key` があること
 - Secret JSON に `aws_session_token` がないこと
 - メール本文の presigned URL に `X-Amz-Security-Token` が出ていないこと
+- メール本文の分析結果リンクが `.html` を指していること
 - URL が `presigned_url_expires_seconds` の期間内に S3 オブジェクトを取得できること
 
 CloudWatch Logs:
@@ -374,7 +378,7 @@ aws iam put-role-policy \
 
 ### 週次分析の入力が見つからない
 
-週次分析は前週の日次ファイルを `daily/` から読み込みます。移行期間の互換用として `responses/YYYY-MM-DD.txt` も読み取り対象です。
+週次分析は前週の日次ファイルを `daily/` から読み込みます。新しい `daily/YYYY-MM-DD.md` を優先し、移行期間の互換用として `daily/YYYY-MM-DD.txt` と `responses/YYYY-MM-DD.txt` も読み取り対象です。
 
 ```bash
 aws s3 ls "s3://${S3_BUCKET_NAME}/daily/"
@@ -383,7 +387,7 @@ aws s3 ls "s3://${S3_BUCKET_NAME}/responses/"
 
 ### 月次分析の入力が見つからない
 
-月次分析は前月内に終了日を持つ週次ファイルを `weekly/` から読み込みます。ファイル名は `weekly/YYYY-MM-DD_YYYY-MM-DD.txt` です。
+月次分析は前月内に終了日を持つ週次ファイルを `weekly/` から読み込みます。新しいファイル名は `weekly/YYYY-MM-DD_YYYY-MM-DD.md` です。過去の `.txt` も互換参照しますが、同じ期間で `.md` と `.txt` が両方ある場合は `.md` だけを使います。
 
 ```bash
 aws s3 ls "s3://${S3_BUCKET_NAME}/weekly/"

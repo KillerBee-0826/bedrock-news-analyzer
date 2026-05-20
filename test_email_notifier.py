@@ -128,6 +128,32 @@ class EmailNotifierPresignedUrlTests(unittest.TestCase):
 
         self.assertFalse(s3_handler.s3_client.generate_presigned_url.called)
 
+    def test_daily_notification_links_to_articles_text_and_analysis_html(self):
+        fake_boto3 = FakeBoto3()
+        notifier, s3_handler = self._build_notifier({}, fake_boto3)
+        s3_handler.s3_client.generate_presigned_url.side_effect = [
+            "https://example.com/articles.txt",
+            "https://example.com/analysis.html",
+        ]
+
+        links = notifier._build_artifact_links(
+            "daily",
+            {
+                "articles": ["daily/2026-05-19_articles.txt"],
+                "analysis": ["daily/2026-05-19.html"],
+            },
+            86400
+        )
+
+        self.assertEqual(
+            links,
+            [
+                {"text": "収集記事一覧を開く", "url": "https://example.com/articles.txt"},
+                {"text": "分析結果を開く", "url": "https://example.com/analysis.html"},
+            ]
+        )
+        self.assertEqual(s3_handler.s3_client.generate_presigned_url.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
