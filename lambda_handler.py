@@ -118,15 +118,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     except Exception as e:
         error_msg = f"Lambda関数実行中に致命的なエラーが発生: {str(e)}"
+        trace = traceback.format_exc()
         logger.error(error_msg)
-        logger.error(traceback.format_exc())
+        logger.error(trace)
         logger.info("=" * 80)
         return {
             'statusCode': 500,
             'body': json.dumps({
                 'success': False,
-                'error': error_msg,
-                'traceback': traceback.format_exc()
+                'error': 'Lambda関数実行中にエラーが発生しました'
             }, ensure_ascii=False)
         }
 

@@ -1,4 +1,5 @@
 import unittest
+from html import escape
 
 from report_html_renderer import render_report_html
 
@@ -87,6 +88,45 @@ class ReportHtmlRendererTests(unittest.TestCase):
         self.assertIn("content: attr(data-label)", html)
         self.assertIn("tbody, tr, td { display: block; width: 100%; }", html)
         self.assertIn("@media print", html)
+
+    def test_table_css_wraps_long_urls_without_desktop_min_width(self):
+        html = render_report_html("CSS確認", "| URL |\n| --- |\n| https://example.com/long/path |")
+
+        self.assertIn("table { width: 100%;", html)
+        self.assertIn("table-layout: fixed", html)
+        self.assertIn("th, td {", html)
+        self.assertIn("overflow-wrap: anywhere", html)
+        self.assertIn(".table-wrap a {", html)
+        self.assertIn("word-break: break-word", html)
+        self.assertNotIn("min-width: 720px", html)
+        self.assertNotIn(
+            "th { background: var(--table-head); font-weight: 700; white-space: nowrap; }",
+            html
+        )
+
+    def test_long_url_in_markdown_table_is_linkified_and_wrappable(self):
+        long_url = (
+            "https://example.com/articles/"
+            "2026/05/24/very-long-url-segment-that-should-wrap-inside-table-cell"
+            "?utm_source=daily-report&utm_medium=email&utm_campaign=technology-news-analysis"
+        )
+        html = render_report_html(
+            "URL確認",
+            "\n".join([
+                "| 記事 | URL |",
+                "| --- | --- |",
+                f"| 長いURLの記事 | {long_url} |",
+            ])
+        )
+
+        escaped_url = escape(long_url, quote=True)
+        self.assertIn(
+            f'<a href="{escaped_url}" rel="noopener noreferrer">{escaped_url}</a>',
+            html
+        )
+        self.assertIn("table { width: 100%;", html)
+        self.assertIn("overflow-wrap: anywhere", html)
+        self.assertNotIn("min-width: 720px", html)
 
     def test_renders_unordered_and_ordered_lists(self):
         html = render_report_html(

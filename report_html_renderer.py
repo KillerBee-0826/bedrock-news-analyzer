@@ -80,21 +80,26 @@ def render_report_html(title: str, content: str) -> str:
     }}
     code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
     .table-wrap {{
-      overflow-x: auto;
+      overflow-x: visible;
       margin: 18px 0 28px;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: var(--surface);
     }}
-    table {{ width: 100%; border-collapse: collapse; min-width: 720px; font-size: 0.94rem; }}
+    table {{ width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.94rem; }}
     th, td {{
       border: 1px solid var(--border);
       padding: 9px 11px;
       vertical-align: top;
       text-align: left;
       overflow-wrap: anywhere;
+      word-break: break-word;
     }}
-    th {{ background: var(--table-head); font-weight: 700; white-space: nowrap; }}
+    .table-wrap a {{
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
+    th {{ background: var(--table-head); font-weight: 700; }}
     tr:nth-child(even) td {{ background: var(--table-stripe); }}
     .muted {{ color: var(--muted); }}
     @media (max-width: 820px) {{
