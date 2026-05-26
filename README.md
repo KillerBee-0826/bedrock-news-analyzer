@@ -41,7 +41,7 @@ graph TD
 ## ディレクトリ構成
 
 ```text
-autoLLMGetter/
+bedrock-news-analyzer/
 ├── lambda_handler.py       # Lambda エントリーポイント
 ├── llm_fetcher.py          # 全体フロー制御
 ├── bedrock_client.py       # Amazon Bedrock クライアント
